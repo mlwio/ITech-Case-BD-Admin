@@ -12,7 +12,9 @@ import {
   resetRateLimit,
 } from "@/lib/security/rate-limit";
 import { isValidBdPhone, normalizeBdPhone, sanitizeText } from "@/lib/security/validate";
-import { accountConfirmationEmail, sendMail } from "@/lib/mailer";
+import { sendMail } from "@/lib/mailer";
+import { moderatorWelcomeEmail } from "@/lib/email-templates/moderator-welcome";
+import { resolveAppBaseUrl } from "@/lib/app-url";
 
 export interface AuthActionResult {
   ok: boolean;
@@ -228,7 +230,7 @@ export async function setPasswordAction(input: {
     const passwordHash = await hashPassword(password);
     const updated = await corePrisma.user.update({
       where: { id: user.id },
-      data: { name, phone, passwordHash, lastActiveAt: new Date() },
+      data: { name, phone, passwordHash, lastActiveAt: new Date(), inviteStatus: "ACTIVE" },
     });
 
     await corePrisma.shopMember.update({
@@ -255,11 +257,12 @@ export async function setPasswordAction(input: {
 
     // Confirmation email is a side-effect — never let it block the sign-in.
     try {
-      const mail = accountConfirmationEmail({
+      const mail = moderatorWelcomeEmail({
         name: updated.name,
         email: updated.email,
         phone,
         password,
+        loginUrl: `${resolveAppBaseUrl()}/login`,
       });
       const sent = await sendMail({
         to: updated.email,

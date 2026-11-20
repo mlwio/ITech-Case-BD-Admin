@@ -93,8 +93,8 @@ export function DateRangeFilter({ range, from, to, shopId, shops, basePath = "/"
 
       <div className="flex flex-wrap items-center gap-2">
         {range === "CUSTOM" && (
-          <div className="flex items-end gap-2">
-            <div className="space-y-1">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-0 flex-1 space-y-1 sm:flex-none">
               <Label htmlFor="range-from" className="text-[10px] text-muted-foreground">
                 From
               </Label>
@@ -104,10 +104,10 @@ export function DateRangeFilter({ range, from, to, shopId, shops, basePath = "/"
                 value={customFrom}
                 max={customTo || undefined}
                 onChange={(event) => setCustomFrom(event.target.value)}
-                className="h-10 w-[140px]"
+                className="h-10 w-full sm:w-[140px]"
               />
             </div>
-            <div className="space-y-1">
+            <div className="min-w-0 flex-1 space-y-1 sm:flex-none">
               <Label htmlFor="range-to" className="text-[10px] text-muted-foreground">
                 To
               </Label>
@@ -117,7 +117,7 @@ export function DateRangeFilter({ range, from, to, shopId, shops, basePath = "/"
                 value={customTo}
                 min={customFrom || undefined}
                 onChange={(event) => setCustomTo(event.target.value)}
-                className="h-10 w-[140px]"
+                className="h-10 w-full sm:w-[140px]"
               />
             </div>
             <Button size="sm" className="h-10 sm:h-9" onClick={() => navigate({ range: "CUSTOM" })}>

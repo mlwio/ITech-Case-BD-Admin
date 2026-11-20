@@ -93,7 +93,14 @@ type PrismaShopMember = {
   isActive: boolean;
   joinedAt: Date | null;
   invitedAt: Date;
-  user: { name: string; email: string; phone: string | null; avatar: string | null; lastActiveAt: Date | null };
+  user: {
+    name: string;
+    email: string;
+    phone: string | null;
+    avatar: string | null;
+    lastActiveAt: Date | null;
+    inviteStatus: ShopMember["inviteStatus"] | null;
+  };
 };
 
 const mapMember = (row: PrismaShopMember): ShopMember => ({
@@ -113,6 +120,10 @@ const mapMember = (row: PrismaShopMember): ShopMember => ({
   phone: row.user.phone,
   avatar: row.user.avatar,
   isActive: row.isActive,
+  // A pending invite outranks the membership flag; otherwise a paused member
+  // reads as DISABLED and everyone else as ACTIVE.
+  inviteStatus:
+    row.user.inviteStatus === "INVITED" ? "INVITED" : row.isActive ? "ACTIVE" : "DISABLED",
   lastActiveAt: row.user.lastActiveAt?.toISOString() ?? null,
   joinedAt: (row.joinedAt ?? row.invitedAt).toISOString(),
 });

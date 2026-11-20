@@ -15,6 +15,7 @@ import {
   Plus,
   Printer,
   Save,
+  Send,
   ShieldCheck,
   ShoppingBag,
   Store,
@@ -62,6 +63,7 @@ import { formatPhone, initialsOf } from "@/lib/format";
 import {
   inviteMemberAction,
   removeMemberAccessAction,
+  resendModeratorInviteAction,
   resetMemberPasswordAction,
   setMemberActiveAction,
   updateMemberPermissionAction,
@@ -217,6 +219,19 @@ export function SettingsView({
     router.refresh();
   }
 
+  async function resendInvite(member: ShopMember) {
+    setBusyId(member.id);
+    const result = await resendModeratorInviteAction(member.id);
+    setBusyId(null);
+
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success("Invitation re-sent", { description: result.message });
+    router.refresh();
+  }
+
   async function removeAccess() {
     if (!removing) return;
     const member = removing;
@@ -301,6 +316,11 @@ export function SettingsView({
                               <BadgeCheck className="h-3 w-3" /> Owner
                             </Badge>
                           )}
+                          {!isOwner && member.inviteStatus === "INVITED" && (
+                            <Badge variant="warning" className="gap-1">
+                              <Send className="h-3 w-3" /> Invite pending
+                            </Badge>
+                          )}
                         </div>
                         <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                           <Mail className="h-3 w-3" /> {member.email}
@@ -345,6 +365,17 @@ export function SettingsView({
                           {member.isActive ? "Active" : "Paused"}
                         </span>
                       </div>
+                      {!isOwner && member.inviteStatus === "INVITED" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-10 sm:h-8"
+                          disabled={busyId === member.id}
+                          onClick={() => resendInvite(member)}
+                        >
+                          <Send className="h-3.5 w-3.5" /> Resend invite
+                        </Button>
+                      )}
                       {!isOwner && (
                         <Button
                           variant="outline"
@@ -468,9 +499,10 @@ export function SettingsView({
 
         <p className="px-1 text-[11px] text-muted-foreground">
           Role and permission changes save instantly. Add a moderator with just an email — they
-          create their own name, phone, and password the first time they sign in at{" "}
-          <span className="font-medium">/login</span>. Use <span className="font-medium">Reset password</span>{" "}
-          if they forget it.
+          receive an invitation link to set their own name, phone, and password, then sign in at{" "}
+          <span className="font-medium">/login</span>. Use{" "}
+          <span className="font-medium">Resend invite</span> if the link expires and{" "}
+          <span className="font-medium">Reset password</span> if they forget it.
         </p>
       </TabsContent>
 
@@ -659,8 +691,8 @@ function InviteMemberDialog({
         <DialogHeader>
           <DialogTitle>Add a moderator</DialogTitle>
           <DialogDescription>
-            Just enter their email. They set their own name, phone, and password the first time they
-            sign in with this email — no password to share.
+            Enter their email. We&apos;ll instantly send an invitation link so they can set their own
+            name, phone, and password — no password to share.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -675,9 +707,10 @@ function InviteMemberDialog({
             />
           </div>
           <div className="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground">
-            They&apos;ll sign in at <span className="font-medium text-foreground">/login</span> with this
-            email, create a password, and get the moderator role. If they forget it, use{" "}
-            <span className="font-medium text-foreground">Reset password</span> from the team list.
+            They&apos;ll get an invitation email with a secure link to complete registration, then sign
+            in at <span className="font-medium text-foreground">/login</span> with the moderator role.
+            If the link expires, use <span className="font-medium text-foreground">Resend invite</span>{" "}
+            from the team list.
           </div>
         </div>
         <DialogFooter>

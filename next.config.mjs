@@ -53,6 +53,14 @@ const nextConfig = {
     // Tree-shake large icon/chart/animation libs to shrink the client bundle
     // and speed up dev compilation + first paint.
     optimizePackageImports: ["lucide-react", "recharts", "framer-motion", "date-fns"],
+    // The three Prisma clients are generated to custom paths under
+    // `node_modules/.prisma/*` (core-client / orders-client / customers-client).
+    // The default Vercel file tracer only walks the *default* `.prisma/client`,
+    // so without this the serverless functions would deploy without the
+    // generated client and its query-engine binary and crash on first query.
+    outputFileTracingIncludes: {
+      "/**/*": ["./node_modules/.prisma/**/*"],
+    },
   },
   images: {
     remotePatterns: [

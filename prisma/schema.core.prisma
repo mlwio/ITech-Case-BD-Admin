@@ -39,6 +39,16 @@ enum MemberRole {
   PACKING_STAFF
 }
 
+/// Lifecycle of an invited moderator account.
+///   INVITED  — invite email sent, awaiting registration via the invite link.
+///   ACTIVE   — registration complete; the account can sign in.
+///   DISABLED — access paused by the owner.
+enum InviteStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
 enum InventoryMovementReason {
   RESTOCK
   MANUAL_ADJUSTMENT
@@ -115,8 +125,18 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  /// Moderator invitation lifecycle (see `InviteStatus`). Null on legacy rows
+  /// created before invitations existed — treated as ACTIVE.
+  inviteStatus InviteStatus?
+  /// Single-use cryptographic token embedded in the invite email link.
+  /// Deliberately indexed but *not* `@unique`: MongoDB's unique index treats a
+  /// missing value as `null` and would reject a second pending invite.
+  inviteToken     String?
+  inviteExpiresAt DateTime?
+
   memberships ShopMember[]
 
+  @@index([inviteToken])
   @@map("users")
 }
 

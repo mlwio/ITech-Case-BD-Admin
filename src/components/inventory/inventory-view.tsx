@@ -518,6 +518,7 @@ function QuickStockDialog({
               <div className="flex items-center gap-2">
                 <Input
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   value={quantity}
                   onChange={(event) => setQuantity(event.target.value)}

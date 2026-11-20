@@ -41,6 +41,10 @@ export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 export const MEMBER_ROLES = ["OWNER", "MODERATOR", "PACKING_STAFF"] as const;
 export type MemberRole = (typeof MEMBER_ROLES)[number];
 
+/** Invitation lifecycle of a moderator account (mirrors prisma `InviteStatus`). */
+export const INVITE_STATUSES = ["INVITED", "ACTIVE", "DISABLED"] as const;
+export type InviteStatus = (typeof INVITE_STATUSES)[number];
+
 export const INVENTORY_MOVEMENT_REASONS = [
   "RESTOCK",
   "MANUAL_ADJUSTMENT",
@@ -91,6 +95,8 @@ export interface ShopMember {
   phone: string | null;
   avatar: string | null;
   isActive: boolean;
+  /** Whether the invite is still pending, active, or paused. */
+  inviteStatus: InviteStatus;
   lastActiveAt: string | null;
   joinedAt: string;
 }

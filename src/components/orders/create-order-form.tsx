@@ -702,6 +702,7 @@ export function CreateOrderForm({
                     <Input
                       id="stock-quantity"
                       type="number"
+                      inputMode="numeric"
                       min={1}
                       max={selectedVariant?.stockQty ?? 1}
                       value={addQuantity}
@@ -844,6 +845,7 @@ export function CreateOrderForm({
                   <Input
                     id="discount"
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={subtotal > 0 ? subtotal : undefined}
                     value={discount || ""}

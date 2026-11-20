@@ -1066,6 +1066,7 @@ function AddExpenseDialog({
             <Input
               id="expense-amount"
               type="number"
+              inputMode="numeric"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
               placeholder="4500"

@@ -83,11 +83,15 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   /**
-   * Guard everything except: the login screen, the Pathao courier webhook
-   * (called by Pathao's servers, not a browser, and verified by HMAC signature
-   * instead of a session), Next.js internals and static assets.
+   * Guard everything except the public surfaces:
+   *   • `/login`                        — the sign-in screen
+   *   • `/moderator/accept-invite`      — invite onboarding (no session yet)
+   *   • `/api/moderators/*`             — invite registration endpoint
+   *   • `/api/webhooks/*`               — called by Pathao's servers, verified
+   *                                        by HMAC signature, not a session
+   * plus Next.js internals and static assets.
    */
   matcher: [
-    "/((?!login|api/webhooks|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|woff|woff2|ttf)$).*)",
+    "/((?!login|moderator|api/moderators|api/webhooks|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|woff|woff2|ttf)$).*)",
   ],
 };

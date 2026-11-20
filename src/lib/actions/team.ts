@@ -14,6 +14,9 @@ import { revalidatePath } from "next/cache";
 import { corePrisma, isDatabaseConfigured } from "@/lib/prisma";
 import { getAuthSession } from "@/lib/auth/session";
 import { DEFAULT_ROLE_PERMISSIONS } from "@/lib/constants";
+import { sendMail } from "@/lib/mailer";
+import { moderatorInviteEmail } from "@/lib/email-templates/moderator-invite";
+import { resolveAppBaseUrl } from "@/lib/app-url";
 import type { MemberRole, PermissionKey, Permissions, ShopMember } from "@/lib/types";
 
 export interface TeamActionResult {
@@ -21,6 +24,41 @@ export interface TeamActionResult {
   mode: "database";
   message: string;
   member?: ShopMember;
+}
+
+/** Invitation links stay valid for 7 days. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * A single-use, unguessable token (32 random bytes, base64url) embedded in the
+ * invite link. The CSPRNG makes collisions negligible without a unique index.
+ */
+function generateInviteToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString("base64url");
+}
+
+/**
+ * Fire-and-forget invitation email. A mail failure must never block the
+ * moderator row from being created, so this never throws.
+ */
+async function sendInviteEmail(email: string, inviteToken: string): Promise<void> {
+  try {
+    const inviteUrl = `${resolveAppBaseUrl()}/moderator/accept-invite?token=${inviteToken}`;
+    const mail = moderatorInviteEmail({ email, inviteUrl });
+    const sent = await sendMail({
+      to: email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+    if (!sent.ok) {
+      console.warn(`[team] invite email not delivered (${sent.error})`);
+    }
+  } catch (error) {
+    console.warn("[team] invite email threw", error);
+  }
 }
 
 const DENIED: TeamActionResult = {
@@ -64,6 +102,7 @@ type MemberRow = {
     phone: string | null;
     avatar: string | null;
     lastActiveAt: Date | null;
+    inviteStatus: ShopMember["inviteStatus"] | null;
   };
 };
 
@@ -85,6 +124,8 @@ function mapMember(row: MemberRow): ShopMember {
     phone: row.user.phone,
     avatar: row.user.avatar,
     isActive: row.isActive,
+    inviteStatus:
+      row.user.inviteStatus === "INVITED" ? "INVITED" : row.isActive ? "ACTIVE" : "DISABLED",
     lastActiveAt: row.user.lastActiveAt?.toISOString() ?? null,
     joinedAt: (row.joinedAt ?? row.invitedAt).toISOString(),
   };
@@ -158,14 +199,30 @@ export async function inviteMemberAction(input: {
     const anyMembership = existing
       ? await corePrisma.shopMember.findFirst({ where: { userId: existing.id } })
       : null;
-    // An account without any active team membership starts with a fresh
-    // password setup, rather than inheriting an old credential.
+
+    // A fresh invitation token, recorded on the account so the emailed link can
+    // be validated (and expires after 7 days).
+    const inviteToken = generateInviteToken();
+    const inviteExpiresAt = new Date(Date.now() + INVITE_TTL_MS);
+
+    // An account without any active team membership starts a fresh onboarding:
+    // clear the old credential *and* the stale phone so the invite never
+    // inherits a previous member's number. The moderator's real name, phone and
+    // password are captured again when they accept the invite.
     const user = existing
       ? await corePrisma.user.update({
           where: { id: existing.id },
-          data: { name, ...(!anyMembership ? { passwordHash: null } : {}) },
+          data: {
+            name,
+            inviteToken,
+            inviteExpiresAt,
+            inviteStatus: "INVITED",
+            ...(!anyMembership ? { passwordHash: null, phone: null } : {}),
+          },
         })
-      : await corePrisma.user.create({ data: { name, email } });
+      : await corePrisma.user.create({
+          data: { name, email, inviteToken, inviteExpiresAt, inviteStatus: "INVITED" },
+        });
 
     const row = await corePrisma.shopMember.create({
       data: {
@@ -178,11 +235,14 @@ export async function inviteMemberAction(input: {
       include: { user: true },
     });
 
+    // Email #1 — the invitation. Best-effort: recorded state is already saved.
+    await sendInviteEmail(user.email, inviteToken);
+
     revalidateTeam();
     return {
       ok: true,
       mode: "database",
-      message: `${name} added — they'll create their own password at first sign-in.`,
+      message: `${name} added — an invitation email is on its way to ${user.email}.`,
       member: mapMember(row),
     };
   } catch (error) {
@@ -396,6 +456,59 @@ export async function removeMemberAccessAction(memberId: string): Promise<TeamAc
       ok: true,
       mode: "database",
       message: `${target.user.name} no longer has access to this shop.`,
+    };
+  } catch (error) {
+    // Log the real cause server-side; never leak internals to the client.
+    console.error("[team]", error);
+    return { ok: false, mode: "database", message: "Could not complete the team update. Please try again." };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Resend a moderator invitation                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Issues a fresh invitation token (extending the 7-day window) and re-sends
+ * Email #1 to the moderator. Used when the original invite expired or was lost.
+ */
+export async function resendModeratorInviteAction(memberId: string): Promise<TeamActionResult> {
+  const session = await requireOwnerSession();
+  if (!session) return DENIED;
+
+  if (!isDatabaseConfigured) {
+    return {
+      ok: false,
+      mode: "database",
+      message: "Team management requires a database connection.",
+    };
+  }
+
+  try {
+    const target = await corePrisma.shopMember.findFirst({
+      where: { id: memberId, shopId: session.shopId },
+      include: { user: true },
+    });
+    if (!target) return { ok: false, mode: "database", message: "Moderator not found." };
+    if (target.role === "OWNER") {
+      return { ok: false, mode: "database", message: "The owner doesn't need an invitation." };
+    }
+
+    const inviteToken = generateInviteToken();
+    const inviteExpiresAt = new Date(Date.now() + INVITE_TTL_MS);
+
+    await corePrisma.user.update({
+      where: { id: target.userId },
+      data: { inviteToken, inviteExpiresAt, inviteStatus: "INVITED" },
+    });
+
+    await sendInviteEmail(target.user.email, inviteToken);
+
+    revalidateTeam();
+    return {
+      ok: true,
+      mode: "database",
+      message: `Invitation re-sent to ${target.user.email}.`,
     };
   } catch (error) {
     // Log the real cause server-side; never leak internals to the client.
