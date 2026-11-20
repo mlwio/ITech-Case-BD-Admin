@@ -28,6 +28,15 @@ function databaseUrl(name: NativeDatabaseName): string | undefined {
   }
 }
 
+function maskedMongoHost(uri: string): string | null {
+  try {
+    const host = new URL(uri).hostname.toLowerCase();
+    return host.endsWith(".mongodb.net") ? `***.mongodb.net` : "***";
+  } catch {
+    return null;
+  }
+}
+
 export function isNativeMongoConfigured(name: NativeDatabaseName): boolean {
   return Boolean(databaseUrl(name));
 }
@@ -80,15 +89,35 @@ export async function pingNativeMongoDatabases() {
   const databases: NativeDatabaseName[] = ["core", "orders", "customers"];
   const results = await Promise.all(
     databases.map(async (database) => {
-      if (!isNativeMongoConfigured(database)) {
-        return { database, configured: false, ok: false };
+      const uri = databaseUrl(database);
+      if (!uri) {
+        return {
+          database,
+          configured: false,
+          host: null,
+          ok: false,
+          error: `${database} database URL is not configured.`,
+        };
       }
       const startedAt = Date.now();
       try {
         await (await getNativeMongoDb(database)).command({ ping: 1 });
-        return { database, configured: true, ok: true, latencyMs: Date.now() - startedAt };
-      } catch {
-        return { database, configured: true, ok: false, latencyMs: Date.now() - startedAt };
+        return {
+          database,
+          configured: true,
+          host: maskedMongoHost(uri),
+          ok: true,
+          latencyMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        return {
+          database,
+          configured: true,
+          host: maskedMongoHost(uri),
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );

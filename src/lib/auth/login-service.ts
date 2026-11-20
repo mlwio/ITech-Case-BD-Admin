@@ -77,9 +77,23 @@ export async function checkLoginAccount(
       },
     };
   } catch (error) {
-    console.error("[auth:check-account] native MongoDB request failed", {
-      name: error instanceof Error ? error.name : "UnknownError",
-    });
+    if (
+      error &&
+      typeof error === "object" &&
+      "name" in error &&
+      error.name === "MongoServerSelectionError"
+    ) {
+      const mongoError = error as Error & { reason?: unknown };
+      console.error("[auth:check-account] MongoServerSelectionError", {
+        message: mongoError.message,
+        reason: mongoError.reason,
+      });
+    } else {
+      console.error("[auth:check-account] native MongoDB request failed", {
+        name: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     return denied(500, "Account lookup failed because the core database is unavailable.");
   }
 }
