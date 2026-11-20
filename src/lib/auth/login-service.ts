@@ -2,6 +2,7 @@ import { corePrisma, isCoreDatabaseConfigured } from "@/lib/prisma";
 import { createSession } from "@/lib/auth/session";
 import { verifyPassword } from "@/lib/auth/password";
 import { authSecret } from "@/lib/auth/config";
+import { findNativeAuthAccount, updateNativeAuthActivity } from "@/lib/auth/native-core-mongo";
 import {
   checkRateLimit,
   clientIpFromHeaders,
@@ -59,12 +60,8 @@ export async function checkLoginAccount(
   }
 
   try {
-    const user = await corePrisma.user.findUnique({ where: { email } });
-    const member = user
-      ? await corePrisma.shopMember.findFirst({ where: { userId: user.id, isActive: true } })
-      : null;
-
-    if (!user || !member) {
+    const account = await findNativeAuthAccount(email);
+    if (!account?.member) {
       return {
         status: 200,
         body: { ok: true, message: "No account found for that email.", notFound: true },
@@ -76,14 +73,39 @@ export async function checkLoginAccount(
       body: {
         ok: true,
         message: "Account found.",
-        needsPasswordSetup: !user.passwordHash,
+        needsPasswordSetup: !account.user.passwordHash,
       },
     };
-  } catch (error) {
-    console.error("[auth:check-account] request failed", {
-      name: error instanceof Error ? error.name : "UnknownError",
+  } catch (nativeError) {
+    console.error("[auth:check-account] native MongoDB failed; trying Prisma 6", {
+      name: nativeError instanceof Error ? nativeError.name : "UnknownError",
     });
-    return denied(500, "Account lookup failed because the core database is unavailable.");
+    try {
+      const user = await corePrisma.user.findUnique({ where: { email } });
+      const member = user
+        ? await corePrisma.shopMember.findFirst({ where: { userId: user.id, isActive: true } })
+        : null;
+
+      if (!user || !member) {
+        return {
+          status: 200,
+          body: { ok: true, message: "No account found for that email.", notFound: true },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          message: "Account found.",
+          needsPasswordSetup: !user.passwordHash,
+        },
+      };
+    } catch (prismaError) {
+      console.error("[auth:check-account] Prisma 6 fallback failed", {
+        name: prismaError instanceof Error ? prismaError.name : "UnknownError",
+      });
+      return denied(500, "Account lookup failed because the core database is unavailable.");
+    }
   }
 }
 
@@ -103,57 +125,99 @@ export async function loginWithPassword(
 
   try {
     authSecret();
-    const user = await corePrisma.user.findUnique({ where: { email } });
-    if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+  } catch (error) {
+    console.error("[auth:login] session signing configuration failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
+    return denied(500, "Authentication is not configured correctly on the server.");
+  }
+
+  try {
+    const account = await findNativeAuthAccount(email);
+    if (
+      !account?.user.passwordHash ||
+      !(await verifyPassword(password, account.user.passwordHash))
+    ) {
       return denied(401, "Invalid email or password.");
     }
-
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: user.id, isActive: true },
-    });
-    if (!member) return denied(403, "This account is paused. Ask the shop owner for access.");
-
-    await corePrisma.user.update({
-      where: { id: user.id },
-      data: { lastActiveAt: new Date() },
-    });
-
-    if (!member.joinedAt) {
-      await corePrisma.shopMember.update({
-        where: { id: member.id },
-        data: { joinedAt: new Date() },
-      });
+    if (!account.member) {
+      return denied(403, "This account is paused. Ask the shop owner for access.");
     }
 
+    await updateNativeAuthActivity(
+      account.user.id,
+      account.member.id,
+      Boolean(account.member.joinedAt),
+    );
+
     await createSession({
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      role: member.role,
-      shopId: member.shopId,
-      permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
-      },
+      userId: account.user.id,
+      name: account.user.name,
+      email: account.user.email,
+      role: account.member.role,
+      shopId: account.member.shopId,
+      permissions: account.member.permissions,
     });
 
     resetRateLimit(gate.key);
-    return { status: 200, body: { ok: true, message: `Welcome back, ${user.name.split(" ")[0]}!` } };
-  } catch (error) {
-    const authMisconfigured =
-      error instanceof Error && error.message.startsWith("AUTH_SECRET must be set");
-    console.error("[auth:login] request failed", {
-      name: error instanceof Error ? error.name : "UnknownError",
-      authMisconfigured,
+    return {
+      status: 200,
+      body: { ok: true, message: `Welcome back, ${account.user.name.split(" ")[0]}!` },
+    };
+  } catch (nativeError) {
+    console.error("[auth:login] native MongoDB failed; trying Prisma 6", {
+      name: nativeError instanceof Error ? nativeError.name : "UnknownError",
     });
-    return denied(
-      500,
-      authMisconfigured
-        ? "Authentication is not configured correctly on the server."
-        : "Sign-in failed because the core database or authentication service is unavailable.",
-    );
+    try {
+      const user = await corePrisma.user.findUnique({ where: { email } });
+      if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+        return denied(401, "Invalid email or password.");
+      }
+
+      const member = await corePrisma.shopMember.findFirst({
+        where: { userId: user.id, isActive: true },
+      });
+      if (!member) return denied(403, "This account is paused. Ask the shop owner for access.");
+
+      await corePrisma.user.update({
+        where: { id: user.id },
+        data: { lastActiveAt: new Date() },
+      });
+      if (!member.joinedAt) {
+        await corePrisma.shopMember.update({
+          where: { id: member.id },
+          data: { joinedAt: new Date() },
+        });
+      }
+
+      await createSession({
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        role: member.role,
+        shopId: member.shopId,
+        permissions: {
+          orders: member.canAccessOrders,
+          products: member.canAccessProducts,
+          customers: member.canAccessCustomers,
+          finance: member.canAccessFinance,
+          inventory: member.canAccessInventory,
+        },
+      });
+
+      resetRateLimit(gate.key);
+      return {
+        status: 200,
+        body: { ok: true, message: `Welcome back, ${user.name.split(" ")[0]}!` },
+      };
+    } catch (prismaError) {
+      console.error("[auth:login] Prisma 6 fallback failed", {
+        name: prismaError instanceof Error ? prismaError.name : "UnknownError",
+      });
+      return denied(
+        500,
+        "Sign-in failed because the core database or authentication service is unavailable.",
+      );
+    }
   }
 }
