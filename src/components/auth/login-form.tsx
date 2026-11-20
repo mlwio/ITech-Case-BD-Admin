@@ -14,8 +14,11 @@ import {
   Loader2,
   Lock,
   Mail,
+  MessageCircle,
+  Phone,
   ShieldCheck,
   Truck,
+  UserRound,
   Wallet,
   Zap,
 } from "lucide-react";
@@ -26,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import loginLogo from "@/Public/Logo/Logo login.jpeg";
 import {
   checkAccountAction,
+  completeProfileAction,
   loginAction,
   setPasswordAction,
 } from "@/lib/actions/auth";
@@ -35,6 +39,9 @@ interface LoginFormProps {
   nextPath: string;
   deniedPath: string | null;
 }
+
+/** Where people without an account are asked to reach the team. */
+const FACEBOOK_PAGE_URL = "https://www.facebook.com/itechcasebd";
 
 const HIGHLIGHTS = [
   { icon: Truck, label: "Pathao Courier v1", detail: "1-click booking & live parcel sync" },
@@ -48,8 +55,12 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
+  const [fullName, setFullName] = React.useState("");
+  const [phone, setPhone] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
-  const [step, setStep] = React.useState<"email" | "password" | "create">("email");
+  const [step, setStep] = React.useState<"email" | "password" | "create" | "profile" | "notfound">(
+    "email",
+  );
   const [submitting, setSubmitting] = React.useState(false);
   const [signedIn, setSignedIn] = React.useState(false);
 
@@ -57,6 +68,8 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
     setStep("email");
     setPassword("");
     setConfirm("");
+    setFullName("");
+    setPhone("");
     setShowPassword(false);
   }
 
@@ -73,6 +86,10 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
       }
       setPassword("");
       setConfirm("");
+      if (result.notFound) {
+        setStep("notfound");
+        return;
+      }
       setStep(result.needsPasswordSetup ? "create" : "password");
     } catch {
       toast.error("Something went wrong. Please try again.");
@@ -118,13 +135,37 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
     }
   }
 
-  /** Step 2 (new account) — create + confirm a password, then sign in. */
+  /** Step 2 (new account) — create + confirm a password, then collect profile. */
   async function handleCreatePassword(event: React.FormEvent) {
     event.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     try {
       const result = await setPasswordAction({ email, password, confirm });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      if (result.needsProfile) {
+        if (result.name) setFullName(result.name);
+        setStep("profile");
+        return;
+      }
+      await finishSession(result.message);
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /** Step 3 — capture name + phone, then the welcome email goes out automatically. */
+  async function handleProfile(event: React.FormEvent) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const result = await completeProfileAction({ email, password, name: fullName, phone });
       if (!result.ok) {
         toast.error(result.message);
         return;
@@ -182,7 +223,16 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
                   Set a password to finish setting up your account.
                 </p>
               </>
-            ) : (
+            ) : step === "profile" ? (
+              <>
+                <h2 className="flex items-center gap-2 text-xl font-semibold">
+                  <UserRound className="h-5 w-5 text-primary" /> Tell us about you
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Add your name and phone number to complete your account.
+                </p>
+              </>
+            ) : step === "notfound" ? null : (
               <>
                 <h2 className="text-xl font-semibold">{step === "email" ? "Sign in" : "Welcome back"}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -235,7 +285,39 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
             </form>
           )}
 
-          {step !== "email" && (
+          {step === "notfound" && (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-amber-900">No account for this email</p>
+                  <p className="text-xs leading-relaxed text-amber-800">
+                    <span className="break-all font-medium">{email}</span> isn&apos;t registered yet.
+                    Message us on Facebook and we&apos;ll set up your access.
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href={FACEBOOK_PAGE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[#1877f2] text-sm font-semibold text-white transition-colors hover:bg-[#166fe5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1877f2]/60 focus-visible:ring-offset-2"
+              >
+                <MessageCircle className="h-4 w-4" /> Contact us on Facebook
+              </a>
+
+              <button
+                type="button"
+                onClick={goToEmailStep}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Use a different email
+              </button>
+            </div>
+          )}
+
+          {step !== "email" && step !== "notfound" && (
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-2.5">
               <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{email}</span>
@@ -312,14 +394,70 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
                   </>
                 ) : (
                   <>
-                    Create password &amp; sign in <ArrowRight className="h-4 w-4" />
+                    Create password &amp; continue <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </Button>
             </form>
           )}
 
-          {step !== "email" && (
+          {step === "profile" && (
+            <form onSubmit={handleProfile} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="full-name">Full name</Label>
+                <div className="relative">
+                  <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="full-name"
+                    type="text"
+                    autoComplete="name"
+                    required
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    placeholder="Your full name"
+                    className="h-11 pl-9"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="phone">Phone number</Label>
+                <div className="relative">
+                  <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="phone"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    required
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    placeholder="01XXXXXXXXX"
+                    className="h-11 pl-9"
+                  />
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                We&apos;ll email your account confirmation to{" "}
+                <span className="font-medium text-foreground">{email}</span>.
+              </p>
+
+              <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Finishing…
+                  </>
+                ) : (
+                  <>
+                    Finish &amp; enter <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </form>
+          )}
+
+          {step !== "email" && step !== "notfound" && (
             <button
               type="button"
               onClick={goToEmailStep}

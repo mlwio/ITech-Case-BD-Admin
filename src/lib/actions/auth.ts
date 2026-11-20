@@ -11,11 +11,17 @@ import {
   formatRetryAfter,
   resetRateLimit,
 } from "@/lib/security/rate-limit";
-import { sanitizeText } from "@/lib/security/validate";
+import { isValidBdPhone, normalizeBdPhone, sanitizeText } from "@/lib/security/validate";
+import { sendMail } from "@/lib/email/mailer";
+import { welcomeEmail } from "@/lib/email/templates";
 
 export interface AuthActionResult {
   ok: boolean;
   message: string;
+  /** Account holder's display name — returned only after the caller proved ownership. */
+  name?: string;
+  /** True when the fresh account still needs a name/phone profile before entering. */
+  needsProfile?: boolean;
 }
 
 /**
@@ -44,6 +50,8 @@ export interface AccountCheckResult {
   message: string;
   /** True when the account exists but has no password yet (first-time setup). */
   needsPasswordSetup?: boolean;
+  /** True when no active account matches the email — the screen offers a way to request access. */
+  notFound?: boolean;
 }
 
 /**
@@ -137,13 +145,12 @@ export async function checkAccountAction(emailInput: string): Promise<AccountChe
       ? await corePrisma.shopMember.findFirst({ where: { userId: user.id, isActive: true } })
       : null;
 
-    // Anti-enumeration: a missing (or paused) email is answered exactly like an
-    // existing password-protected account — we advance to the password step and
-    // let the generic sign-in error handle the rest. Only accounts that still
-    // need a first password branch to the "create" step, and the account owner's
-    // name is never returned so the response cannot leak personal data.
+    // Unknown email (or paused account) → the login screen shows a "request
+    // access" panel with the Facebook contact button, so nobody is left stuck
+    // guessing. Only accounts that still need a first password branch to the
+    // "create" step; the owner's name is never returned here.
     if (!user || !member) {
-      return { ok: true, message: "Enter your password to continue.", needsPasswordSetup: false };
+      return { ok: true, message: "No account found for that email.", notFound: true };
     }
 
     return {
@@ -222,6 +229,21 @@ export async function setPasswordAction(input: {
       data: { joinedAt: member.joinedAt ?? new Date() },
     });
 
+    resetRateLimit(gate.key);
+
+    // A brand-new invitee has no phone on file yet — hold off on creating the
+    // session and collect name + phone in a short profile step (the session is
+    // created there once the profile is complete). Accounts that are already
+    // complete sign in immediately.
+    if (!user.phone) {
+      return {
+        ok: true,
+        message: `Password created — welcome, ${user.name.split(" ")[0]}!`,
+        name: user.name,
+        needsProfile: true,
+      };
+    }
+
     await createSession({
       userId: user.id,
       name: user.name,
@@ -237,10 +259,94 @@ export async function setPasswordAction(input: {
       },
     });
 
-    resetRateLimit(gate.key);
     return { ok: true, message: `Password created — welcome, ${user.name.split(" ")[0]}!` };
   } catch (error) {
     return failClosed("set-password", error);
+  }
+}
+
+/**
+ * Final onboarding step for a freshly invited teammate: capture their name and
+ * phone, persist them, open the session, and fire the automatic "account ready"
+ * email. Re-verifies the just-created password so no half-authenticated state
+ * can write profile data. A mail failure is logged but never blocks sign-in.
+ */
+export async function completeProfileAction(input: {
+  email: string;
+  password: string;
+  name: string;
+  phone: string;
+}): Promise<AuthActionResult> {
+  const email = sanitizeText(input.email, 200).toLowerCase();
+  const password = typeof input.password === "string" ? input.password : "";
+  const name = sanitizeText(input.name, 120);
+  const phone = normalizeBdPhone(input.phone);
+
+  if (!email || !password) {
+    return { ok: false, message: "Your session expired. Please sign in again." };
+  }
+  if (!name) {
+    return { ok: false, message: "Please enter your full name." };
+  }
+  if (!isValidBdPhone(phone)) {
+    return { ok: false, message: "Enter a valid Bangladeshi number, e.g. 01712345678." };
+  }
+
+  const gate = authRateLimit("complete-profile", email);
+  if (!gate.ok) return { ok: false, message: gate.message };
+
+  if (!isDatabaseConfigured) {
+    return { ok: false, message: "No database attached yet." };
+  }
+
+  try {
+    const user = await corePrisma.user.findUnique({ where: { email } });
+    if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+      return { ok: false, message: "Your session expired. Please sign in again." };
+    }
+
+    const member = await corePrisma.shopMember.findFirst({
+      where: { userId: user.id, isActive: true },
+    });
+    if (!member) {
+      return { ok: false, message: "This account is paused. Ask the shop owner for access." };
+    }
+
+    const updated = await corePrisma.user.update({
+      where: { id: user.id },
+      data: { name, phone, lastActiveAt: new Date() },
+    });
+
+    await createSession({
+      userId: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: member.role,
+      shopId: member.shopId,
+      permissions: {
+        orders: member.canAccessOrders,
+        products: member.canAccessProducts,
+        customers: member.canAccessCustomers,
+        finance: member.canAccessFinance,
+        inventory: member.canAccessInventory,
+      },
+    });
+
+    const mail = welcomeEmail({ name: updated.name, email: updated.email });
+    const sent = await sendMail({
+      to: updated.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+    if (!sent.ok) {
+      console.warn(`[auth:complete-profile] welcome email not delivered (${sent.error})`);
+    }
+
+    resetRateLimit(gate.key);
+    return { ok: true, message: `All set — welcome, ${updated.name.split(" ")[0]}!` };
+  } catch (error) {
+    return failClosed("complete-profile", error);
   }
 }
 

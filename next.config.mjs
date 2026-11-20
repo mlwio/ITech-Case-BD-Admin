@@ -49,7 +49,7 @@ const nextConfig = {
   // Keeps the Prisma engine out of the client bundle and lets the same build
   // run on Vercel (serverless) and a self-hosted Linux VPS (long-running node).
   experimental: {
-    serverComponentsExternalPackages: ["@prisma/client", "prisma"],
+    serverComponentsExternalPackages: ["@prisma/client", "prisma", "nodemailer"],
     // Tree-shake large icon/chart/animation libs to shrink the client bundle
     // and speed up dev compilation + first paint.
     optimizePackageImports: ["lucide-react", "recharts", "framer-motion", "date-fns"],
