@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
   AlertTriangle,
@@ -26,11 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import loginLogo from "@/Public/Logo/Logo login.jpeg";
-import {
-  checkAccountAction,
-  loginAction,
-  setPasswordAction,
-} from "@/lib/actions/auth";
+import { setPasswordAction } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
 
 interface LoginFormProps {
@@ -48,8 +43,50 @@ const HIGHLIGHTS = [
   { icon: ShieldCheck, label: "Role guards", detail: "Owner, Moderator & Packing Staff" },
 ];
 
+interface AuthResponse {
+  ok: boolean;
+  message: string;
+  needsPasswordSetup?: boolean;
+  notFound?: boolean;
+}
+
+async function postAuthRequest<T extends AuthResponse>(
+  url: string,
+  body: Record<string, unknown>,
+): Promise<{ response: Response; result: T }> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const result = (await response.json().catch(() => null)) as T | null;
+    if (!result || typeof result.message !== "string") {
+      throw new Error("The sign-in service returned an invalid response.");
+    }
+    return { response, result };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("The request timed out after 10 seconds. Please try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function requestErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.includes("timed out")) return error.message;
+  if (error instanceof Error && error.message.includes("invalid response")) return error.message;
+  return "Unable to reach the sign-in service. Check your connection and try again.";
+}
+
 export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
-  const router = useRouter();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
@@ -77,8 +114,11 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const result = await checkAccountAction(email);
-      if (!result.ok) {
+      const { response, result } = await postAuthRequest<AuthResponse>(
+        "/api/auth/check-account",
+        { email },
+      );
+      if (!response.ok || !result.ok) {
         toast.error(result.message);
         return;
       }
@@ -89,8 +129,8 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
         return;
       }
       setStep(result.needsPasswordSetup ? "onboarding" : "password");
-    } catch {
-      toast.error("Something went wrong. Please try again.");
+    } catch (error) {
+      toast.error(requestErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -110,8 +150,7 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
       await new Promise((resolve) => setTimeout(resolve, 420));
     }
     toast.success(message);
-    router.replace(nextPath);
-    router.refresh();
+    window.location.href = nextPath;
   }
 
   /** Step 2 (existing account) — sign in with the password. */
@@ -120,14 +159,17 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const result = await loginAction({ email, password });
-      if (!result.ok) {
+      const { response, result } = await postAuthRequest<AuthResponse>(
+        "/api/auth/login",
+        { email, password },
+      );
+      if (!response.ok || !result.ok) {
         toast.error(result.message);
         return;
       }
       await finishSession(result.message);
-    } catch {
-      toast.error("Something went wrong. Please try again.");
+    } catch (error) {
+      toast.error(requestErrorMessage(error));
     } finally {
       setSubmitting(false);
     }

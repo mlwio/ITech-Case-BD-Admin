@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { corePrisma, isDatabaseConfigured } from "@/lib/prisma";
-import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { hashPassword } from "@/lib/auth/password";
 import { createSession, destroySession } from "@/lib/auth/session";
+import { checkLoginAccount, loginWithPassword } from "@/lib/auth/login-service";
 import {
   checkRateLimit,
   clientIpFromHeaders,
@@ -56,67 +57,8 @@ export interface AccountCheckResult {
  * compared with bcrypt and the active `ShopMember` row decides the role.
  */
 export async function loginAction(input: { email: string; password: string }): Promise<AuthActionResult> {
-  const email = sanitizeText(input.email, 200).toLowerCase();
-  const password = typeof input.password === "string" ? input.password : "";
-
-  if (!email || !password) {
-    return { ok: false, message: "Email and password are required." };
-  }
-
-  const gate = authRateLimit("login", email);
-  if (!gate.ok) return { ok: false, message: gate.message };
-
-  if (!isDatabaseConfigured) {
-    return {
-      ok: false,
-      message: "Sign-in is unavailable because the database is not configured.",
-    };
-  }
-
-  try {
-    const user = await corePrisma.user.findUnique({ where: { email } });
-
-    if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
-      return { ok: false, message: "Invalid email or password." };
-    }
-
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: user.id, isActive: true },
-    });
-    if (!member) {
-      return { ok: false, message: "This account is paused. Ask the shop owner for access." };
-    }
-
-    await corePrisma.user.update({ where: { id: user.id }, data: { lastActiveAt: new Date() } });
-
-    // First successful sign-in marks the invite as joined.
-    if (!member.joinedAt) {
-      await corePrisma.shopMember.update({
-        where: { id: member.id },
-        data: { joinedAt: new Date() },
-      });
-    }
-
-    await createSession({
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      role: member.role,
-      shopId: member.shopId,
-      permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
-      },
-    });
-
-    resetRateLimit(gate.key);
-    return { ok: true, message: `Welcome back, ${user.name.split(" ")[0]}!` };
-  } catch (error) {
-    return failClosed("login", error);
-  }
+  const result = await loginWithPassword(input, headers());
+  return result.body;
 }
 
 /**
@@ -124,41 +66,8 @@ export async function loginAction(input: { email: string; password: string }): P
  * password (show "Sign in") or still needs one (show "Create password").
  */
 export async function checkAccountAction(emailInput: string): Promise<AccountCheckResult> {
-  const email = sanitizeText(emailInput, 200).toLowerCase();
-  if (!email) {
-    return { ok: false, message: "Enter your email address." };
-  }
-
-  const gate = authRateLimit("check-account", email);
-  if (!gate.ok) return { ok: false, message: gate.message };
-
-  if (!isDatabaseConfigured) {
-    return { ok: false, message: "Account lookup is unavailable because the database is not configured." };
-  }
-
-  try {
-    const user = await corePrisma.user.findUnique({ where: { email } });
-    const member = user
-      ? await corePrisma.shopMember.findFirst({ where: { userId: user.id, isActive: true } })
-      : null;
-
-    // Unknown email (or paused account) → the login screen shows a "request
-    // access" panel with the Facebook contact button, so nobody is left stuck
-    // guessing. Only accounts that still need a first password branch to the
-    // "create" step; the owner's name is never returned here.
-    if (!user || !member) {
-      return { ok: true, message: "No account found for that email.", notFound: true };
-    }
-
-    return {
-      ok: true,
-      message: "Account found.",
-      needsPasswordSetup: !user.passwordHash,
-    };
-  } catch (error) {
-    console.error("[auth:check-account]", error);
-    return { ok: false, message: "Something went wrong. Please try again." };
-  }
+  const result = await checkLoginAccount(emailInput, headers());
+  return result.body;
 }
 
 /**
