@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   ShoppingBag,
   Store,
+  Trash2,
   Truck,
   UserCog,
   UserPlus,
@@ -60,6 +61,7 @@ import {
 import { formatPhone, initialsOf } from "@/lib/format";
 import {
   inviteMemberAction,
+  removeMemberAccessAction,
   resetMemberPasswordAction,
   setMemberActiveAction,
   updateMemberPermissionAction,
@@ -129,6 +131,8 @@ export function SettingsView({
   const router = useRouter();
   const [members, setMembers] = React.useState<ShopMember[]>(initialMembers);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [removing, setRemoving] = React.useState<ShopMember | null>(null);
+  const [removingPending, setRemovingPending] = React.useState(false);
 
   // Re-sync with the server after `router.refresh()` so persisted edits win.
   React.useEffect(() => {
@@ -210,6 +214,23 @@ export function SettingsView({
     toast.success("Password reset", {
       description: `${member.name} will create a new password at their next sign-in.`,
     });
+    router.refresh();
+  }
+
+  async function removeAccess() {
+    if (!removing) return;
+    const member = removing;
+    setRemovingPending(true);
+    const result = await removeMemberAccessAction(member.id);
+    setRemovingPending(false);
+
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    setMembers((prev) => prev.filter((item) => item.id !== member.id));
+    setRemoving(null);
+    toast.success("Access removed", { description: result.message });
     router.refresh();
   }
 
@@ -333,6 +354,17 @@ export function SettingsView({
                           onClick={() => resetPassword(member)}
                         >
                           <KeyRound className="h-3.5 w-3.5" /> Reset password
+                        </Button>
+                      )}
+                      {!isOwner && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-10 text-destructive hover:text-destructive sm:h-8"
+                          disabled={busyId === member.id}
+                          onClick={() => setRemoving(member)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Remove access
                         </Button>
                       )}
                     </div>
@@ -533,6 +565,42 @@ export function SettingsView({
         </FadeIn>
       </TabsContent>
       </Tabs>
+
+      <Dialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove access?</DialogTitle>
+            <DialogDescription>
+              {removing ? (
+                <>
+                  <span className="font-medium text-foreground">{removing.name}</span> ({removing.email}) will
+                  no longer be able to sign in to this shop.
+                </>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-[11px] text-muted-foreground">
+            This revokes their moderator access immediately. You can add the same email again later if
+            needed — they&apos;ll set up a new password at their next sign-in.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)} disabled={removingPending}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={removeAccess} disabled={removingPending}>
+              {removingPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Removing…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" /> Remove access
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

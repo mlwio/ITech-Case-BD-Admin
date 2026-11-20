@@ -354,3 +354,52 @@ export async function resetMemberPasswordAction(memberId: string): Promise<TeamA
     return { ok: false, mode: "database", message: "Could not complete the team update. Please try again." };
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Remove a moderator's access (revokes membership entirely)                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Revokes a teammate's access to the shop by deleting their membership row.
+ * The `User` record is kept (orders and audit entries reference `userId` as a
+ * plain scalar across databases), but without an active membership the account
+ * can no longer sign in — `getAuthSession` returns null. Re-inviting the same
+ * email later restores access through the normal onboarding flow.
+ */
+export async function removeMemberAccessAction(memberId: string): Promise<TeamActionResult> {
+  const session = await requireOwnerSession();
+  if (!session) return DENIED;
+
+  if (!isDatabaseConfigured) {
+    return {
+      ok: false,
+      mode: "database",
+      message: "Team management requires a database connection.",
+    };
+  }
+
+  try {
+    const target = await corePrisma.shopMember.findFirst({
+      where: { id: memberId, shopId: session.shopId },
+      include: { user: true },
+    });
+    if (!target) return { ok: false, mode: "database", message: "Moderator not found." };
+
+    if (target.role === "OWNER" || target.userId === session.userId) {
+      return { ok: false, mode: "database", message: "The shop owner's access can't be removed." };
+    }
+
+    await corePrisma.shopMember.delete({ where: { id: target.id } });
+
+    revalidateTeam();
+    return {
+      ok: true,
+      mode: "database",
+      message: `${target.user.name} no longer has access to this shop.`,
+    };
+  } catch (error) {
+    // Log the real cause server-side; never leak internals to the client.
+    console.error("[team]", error);
+    return { ok: false, mode: "database", message: "Could not complete the team update. Please try again." };
+  }
+}
