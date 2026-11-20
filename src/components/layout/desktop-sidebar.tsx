@@ -45,7 +45,7 @@ export function DesktopSidebar({ shops, user, counts }: DesktopSidebarProps) {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur-md lg:flex">
+      <header className="fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-2 border-b border-border bg-background px-3 lg:flex">
         <Button
           type="button"
           variant={open ? "secondary" : "ghost"}

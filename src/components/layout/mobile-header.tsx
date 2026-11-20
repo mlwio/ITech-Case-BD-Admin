@@ -51,7 +51,7 @@ export function MobileHeader({ shops, user, counts, notifications }: MobileHeade
   const [navOpen, setNavOpen] = React.useState(false);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-card/95 pt-safe backdrop-blur lg:hidden">
+    <header className="sticky top-0 z-40 border-b border-border bg-card pt-safe lg:hidden">
       <div className="flex h-14 items-center gap-2 px-3">
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <SheetTrigger asChild>

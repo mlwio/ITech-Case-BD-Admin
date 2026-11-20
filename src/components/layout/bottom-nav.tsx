@@ -31,7 +31,7 @@ export function BottomNav({ permissions }: BottomNavProps) {
   return (
     <nav
       aria-label="Bottom"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 shadow-nav backdrop-blur pb-safe lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card shadow-nav pb-safe lg:hidden"
     >
       <ul className="mx-auto grid max-w-md grid-cols-6">
         {items.map((item) => {

@@ -50,6 +50,9 @@ const nextConfig = {
   // run on Vercel (serverless) and a self-hosted Linux VPS (long-running node).
   experimental: {
     serverComponentsExternalPackages: ["@prisma/client", "prisma"],
+    // Tree-shake large icon/chart/animation libs to shrink the client bundle
+    // and speed up dev compilation + first paint.
+    optimizePackageImports: ["lucide-react", "recharts", "framer-motion", "date-fns"],
   },
   images: {
     remotePatterns: [
