@@ -40,9 +40,6 @@ export default async function LoginPage({
   if (session) redirect(nextPath);
 
   return (
-    <LoginForm
-      nextPath={nextPath}
-      deniedPath={searchParams.denied ?? null}
-    />
+    <LoginForm deniedPath={searchParams.denied ?? null} />
   );
 }

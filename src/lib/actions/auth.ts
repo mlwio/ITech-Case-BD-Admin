@@ -2,10 +2,14 @@
 
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { corePrisma, isDatabaseConfigured } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession, destroySession } from "@/lib/auth/session";
 import { checkLoginAccount, loginWithPassword } from "@/lib/auth/login-service";
+import {
+  findNativeAuthAccount,
+  setupNativePassword,
+} from "@/lib/auth/native-core-mongo";
+import { isNativeMongoConfigured } from "@/lib/mongo-native";
 import {
   checkRateLimit,
   clientIpFromHeaders,
@@ -53,8 +57,7 @@ export interface AccountCheckResult {
 }
 
 /**
- * Email + password sign-in against the Prisma `User` table. Passwords are
- * compared with bcrypt and the active `ShopMember` row decides the role.
+ * Email + password sign-in through the native MongoDB auth repository.
  */
 export async function loginAction(input: { email: string; password: string }): Promise<AuthActionResult> {
   const result = await loginWithPassword(input, headers());
@@ -71,8 +74,8 @@ export async function checkAccountAction(emailInput: string): Promise<AccountChe
 }
 
 /**
- * First-time onboarding for an account the owner added (invite, where
- * `passwordHash` is still null): captures the moderator's name, phone and a
+ * First-time onboarding for an account the owner added (where `passwordHash`
+ * is still null): captures the moderator's name, phone and a
  * fresh password in a single step, persists them, signs them straight into the
  * dashboard, then fires the automatic confirmation email. A mail failure is
  * logged but never blocks sign-in.
@@ -112,40 +115,39 @@ export async function setPasswordAction(input: {
   const gate = authRateLimit("set-password", email);
   if (!gate.ok) return { ok: false, message: gate.message };
 
-  if (!isDatabaseConfigured) {
+  if (!isNativeMongoConfigured("core")) {
     return { ok: false, message: "No database attached yet." };
   }
 
   try {
-    const user = await corePrisma.user.findUnique({ where: { email } });
     // Anti-enumeration: an unknown email and an account that already has a
     // password share one indistinguishable response, so this endpoint cannot be
     // used to probe which emails exist.
-    if (!user || user.passwordHash) {
+    const existing = await findNativeAuthAccount(email);
+    if (!existing || existing.user.passwordHash) {
       return {
         ok: false,
         message:
           "We couldn't set up your account for that email. If you already have a password, sign in instead — otherwise ask the shop owner to add you.",
       };
     }
-
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: user.id, isActive: true },
-    });
-    if (!member) {
+    if (!existing.member) {
       return { ok: false, message: "We couldn't set up your account for that email. Please ask the shop owner to add you." };
     }
 
-    const passwordHash = await hashPassword(password);
-    const updated = await corePrisma.user.update({
-      where: { id: user.id },
-      data: { name, phone, passwordHash, lastActiveAt: new Date(), inviteStatus: "ACTIVE" },
-    });
+    const setup = await setupNativePassword(email, name, phone, await hashPassword(password));
+    if (setup.kind === "not-eligible") {
+      return {
+        ok: false,
+        message:
+          "We couldn't set up your account for that email. If you already have a password, sign in instead — otherwise ask the shop owner to add you.",
+      };
+    }
+    if (setup.kind === "no-active-membership" || !setup.account.member) {
+      return { ok: false, message: "We couldn't set up your account for that email. Please ask the shop owner to add you." };
+    }
 
-    await corePrisma.shopMember.update({
-      where: { id: member.id },
-      data: { joinedAt: member.joinedAt ?? new Date() },
-    });
+    const { user: updated, member } = setup.account;
 
     await createSession({
       userId: updated.id,
@@ -154,11 +156,11 @@ export async function setPasswordAction(input: {
       role: member.role,
       shopId: member.shopId,
       permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
+        orders: member.permissions.orders,
+        products: member.permissions.products,
+        customers: member.permissions.customers,
+        finance: member.permissions.finance,
+        inventory: member.permissions.inventory,
       },
     });
 

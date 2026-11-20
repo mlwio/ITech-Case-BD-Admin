@@ -29,7 +29,6 @@ import { setPasswordAction } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
 
 interface LoginFormProps {
-  nextPath: string;
   deniedPath: string | null;
 }
 
@@ -55,7 +54,7 @@ async function postAuthRequest<T extends AuthResponse>(
   body: Record<string, unknown>,
 ): Promise<{ response: Response; result: T }> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
 
   try {
     const response = await fetch(url, {
@@ -72,7 +71,7 @@ async function postAuthRequest<T extends AuthResponse>(
     return { response, result };
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error("The request timed out after 10 seconds. Please try again.");
+      throw new Error("The request timed out after 20 seconds. Please try again.");
     }
     throw error;
   } finally {
@@ -86,7 +85,7 @@ function requestErrorMessage(error: unknown): string {
   return "Unable to reach the sign-in service. Check your connection and try again.";
 }
 
-export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
+export function LoginForm({ deniedPath }: LoginFormProps) {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
@@ -150,7 +149,7 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
       await new Promise((resolve) => setTimeout(resolve, 420));
     }
     toast.success(message);
-    window.location.href = nextPath;
+    window.location.href = "/dashboard";
   }
 
   /** Step 2 (existing account) — sign in with the password. */

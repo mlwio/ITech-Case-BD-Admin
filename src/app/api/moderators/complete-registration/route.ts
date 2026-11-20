@@ -9,9 +9,10 @@
  */
 
 import { NextResponse } from "next/server";
-import { corePrisma, isDatabaseConfigured } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
+import { completeNativeInvite } from "@/lib/auth/native-core-mongo";
+import { isNativeMongoConfigured } from "@/lib/mongo-native";
 import { isValidBdPhone, normalizeBdPhone, sanitizeText } from "@/lib/security/validate";
 import { sendMail } from "@/lib/mailer";
 import { moderatorWelcomeEmail } from "@/lib/email-templates/moderator-welcome";
@@ -53,47 +54,27 @@ export async function POST(request: Request) {
   if (password.length > 128) return fail("Password is too long (max 128 characters).");
   if (password !== confirm) return fail("The two passwords don't match.");
 
-  if (!isDatabaseConfigured) {
+  if (!isNativeMongoConfigured("core")) {
     return fail("Registration is unavailable because the database is not configured.", 503);
   }
 
   try {
-    const user = await corePrisma.user.findFirst({
-      where: { inviteToken: token, inviteStatus: "INVITED" },
+    const completion = await completeNativeInvite(token, {
+      name,
+      phone,
+      passwordHash: await hashPassword(password),
     });
-    if (!user || !user.inviteExpiresAt || user.inviteExpiresAt.getTime() < Date.now()) {
+    if (completion.kind === "invalid") {
       return fail(
         "This invitation link is invalid or has expired. Please ask the shop owner to send a new invite.",
         410,
       );
     }
-
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: user.id, isActive: true },
-    });
-    if (!member) {
+    if (completion.kind === "revoked" || !completion.account.member) {
       return fail("Your access has been revoked. Please contact the shop owner.", 403);
     }
 
-    const passwordHash = await hashPassword(password);
-    const updated = await corePrisma.user.update({
-      where: { id: user.id },
-      data: {
-        name,
-        phone,
-        passwordHash,
-        inviteStatus: "ACTIVE",
-        // Single-use: clear the token once redeemed.
-        inviteToken: null,
-        inviteExpiresAt: null,
-        lastActiveAt: new Date(),
-      },
-    });
-
-    await corePrisma.shopMember.update({
-      where: { id: member.id },
-      data: { joinedAt: member.joinedAt ?? new Date() },
-    });
+    const { user: updated, member } = completion.account;
 
     // Sign the moderator straight in so the redirect lands on the dashboard.
     await createSession({
@@ -102,13 +83,7 @@ export async function POST(request: Request) {
       email: updated.email,
       role: member.role,
       shopId: member.shopId,
-      permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
-      },
+      permissions: member.permissions,
     });
 
     // Email #2 — confirmation with credentials. Best-effort: the account is

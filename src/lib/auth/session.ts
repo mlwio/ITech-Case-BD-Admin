@@ -6,9 +6,10 @@
  */
 
 import { cookies, headers } from "next/headers";
-import { corePrisma, isCoreDatabaseConfigured } from "@/lib/prisma";
 import { SESSION_COOKIE, SESSION_MAX_AGE } from "./config";
 import { signSession, verifySession, type SessionPayload } from "./token";
+import { findNativeSessionAccount } from "./native-core-mongo";
+import { isNativeMongoConfigured } from "@/lib/mongo-native";
 
 export type { SessionPayload };
 
@@ -37,29 +38,18 @@ function shouldUseSecureCookie(): boolean {
 export async function getAuthSession(): Promise<SessionPayload | null> {
   const token = cookies().get(SESSION_COOKIE)?.value;
   const session = await verifySession(token);
-  if (!session || !isCoreDatabaseConfigured) return null;
+  if (!session || !isNativeMongoConfigured("core")) return null;
 
   try {
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: session.userId, shopId: session.shopId, isActive: true },
-    });
-    if (!member) return null;
-
-    const user = await corePrisma.user.findUnique({ where: { id: session.userId } });
-    if (!user?.passwordHash) return null;
+    const account = await findNativeSessionAccount(session.userId, session.shopId);
+    if (!account?.member || !account.user.passwordHash) return null;
 
     return {
       ...session,
-      name: user.name,
-      email: user.email,
-      role: member.role,
-      permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
-      },
+      name: account.user.name,
+      email: account.user.email,
+      role: account.member.role,
+      permissions: account.member.permissions,
     };
   } catch {
     // Preserve access during a transient database outage; membership changes
