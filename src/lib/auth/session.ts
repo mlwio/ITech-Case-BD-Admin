@@ -15,14 +15,13 @@ export type { SessionPayload };
 /**
  * Whether the session cookie should carry the `Secure` flag.
  *
- * Tying this to `NODE_ENV` alone breaks a production build served over plain
- * HTTP (`next start` on http://localhost or a LAN IP): browsers silently drop
- * a `Secure` cookie delivered over http, so the sign-in "succeeds" yet the
- * cookie never sticks and the user bounces straight back to /login. We instead
- * ask the request what scheme it actually used — an https proxy wins, then the
- * configured public app URL, and only then NODE_ENV as a last resort.
+ * Production deployments always require Secure cookies. In development, use
+ * the request or configured app URL so HTTPS tunnels still receive Secure
+ * cookies without breaking plain-HTTP localhost.
  */
 function shouldUseSecureCookie(): boolean {
+  if (process.env.NODE_ENV === "production") return true;
+
   try {
     const proto = headers().get("x-forwarded-proto");
     if (proto) return proto.split(",")[0].trim() === "https";
@@ -31,7 +30,7 @@ function shouldUseSecureCookie(): boolean {
   }
   const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (appUrl) return appUrl.startsWith("https://");
-  return process.env.NODE_ENV === "production";
+  return false;
 }
 
 /** Reads the session and refreshes its role from the active database membership. */
