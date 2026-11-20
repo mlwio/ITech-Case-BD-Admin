@@ -5,12 +5,34 @@
  * this module adds the `next/headers` cookie plumbing.
  */
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { corePrisma, isCoreDatabaseConfigured } from "@/lib/prisma";
 import { SESSION_COOKIE, SESSION_MAX_AGE } from "./config";
 import { signSession, verifySession, type SessionPayload } from "./token";
 
 export type { SessionPayload };
+
+/**
+ * Whether the session cookie should carry the `Secure` flag.
+ *
+ * Tying this to `NODE_ENV` alone breaks a production build served over plain
+ * HTTP (`next start` on http://localhost or a LAN IP): browsers silently drop
+ * a `Secure` cookie delivered over http, so the sign-in "succeeds" yet the
+ * cookie never sticks and the user bounces straight back to /login. We instead
+ * ask the request what scheme it actually used — an https proxy wins, then the
+ * configured public app URL, and only then NODE_ENV as a last resort.
+ */
+function shouldUseSecureCookie(): boolean {
+  try {
+    const proto = headers().get("x-forwarded-proto");
+    if (proto) return proto.split(",")[0].trim() === "https";
+  } catch {
+    // Not in a request scope — fall through to the static checks.
+  }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (appUrl) return appUrl.startsWith("https://");
+  return process.env.NODE_ENV === "production";
+}
 
 /** Reads the session and refreshes its role from the active database membership. */
 export async function getAuthSession(): Promise<SessionPayload | null> {
@@ -53,7 +75,7 @@ export async function createSession(payload: SessionPayload): Promise<void> {
   cookies().set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
