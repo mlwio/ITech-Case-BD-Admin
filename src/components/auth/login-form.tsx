@@ -10,7 +10,6 @@ import {
   Check,
   Eye,
   EyeOff,
-  KeyRound,
   Loader2,
   Lock,
   Mail,
@@ -29,7 +28,6 @@ import { Label } from "@/components/ui/label";
 import loginLogo from "@/Public/Logo/Logo login.jpeg";
 import {
   checkAccountAction,
-  completeProfileAction,
   loginAction,
   setPasswordAction,
 } from "@/lib/actions/auth";
@@ -58,7 +56,7 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
   const [fullName, setFullName] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
-  const [step, setStep] = React.useState<"email" | "password" | "create" | "profile" | "notfound">(
+  const [step, setStep] = React.useState<"email" | "password" | "onboarding" | "notfound">(
     "email",
   );
   const [submitting, setSubmitting] = React.useState(false);
@@ -90,7 +88,7 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
         setStep("notfound");
         return;
       }
-      setStep(result.needsPasswordSetup ? "create" : "password");
+      setStep(result.needsPasswordSetup ? "onboarding" : "password");
     } catch {
       toast.error("Something went wrong. Please try again.");
     } finally {
@@ -135,37 +133,13 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
     }
   }
 
-  /** Step 2 (new account) — create + confirm a password, then collect profile. */
-  async function handleCreatePassword(event: React.FormEvent) {
+  /** Step 2 (new account) — capture name + phone + password, then sign in. */
+  async function handleOnboarding(event: React.FormEvent) {
     event.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     try {
-      const result = await setPasswordAction({ email, password, confirm });
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      if (result.needsProfile) {
-        if (result.name) setFullName(result.name);
-        setStep("profile");
-        return;
-      }
-      await finishSession(result.message);
-    } catch {
-      toast.error("Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  /** Step 3 — capture name + phone, then the welcome email goes out automatically. */
-  async function handleProfile(event: React.FormEvent) {
-    event.preventDefault();
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const result = await completeProfileAction({ email, password, name: fullName, phone });
+      const result = await setPasswordAction({ email, name: fullName, phone, password, confirm });
       if (!result.ok) {
         toast.error(result.message);
         return;
@@ -214,22 +188,13 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
           </div>
 
           <div className="mb-5">
-            {step === "create" ? (
+            {step === "onboarding" ? (
               <>
                 <h2 className="flex items-center gap-2 text-xl font-semibold">
-                  <KeyRound className="h-5 w-5 text-primary" /> Create your password
+                  <UserRound className="h-5 w-5 text-primary" /> Set up your account
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Set a password to finish setting up your account.
-                </p>
-              </>
-            ) : step === "profile" ? (
-              <>
-                <h2 className="flex items-center gap-2 text-xl font-semibold">
-                  <UserRound className="h-5 w-5 text-primary" /> Tell us about you
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Add your name and phone number to complete your account.
+                  Add your details and create a password to finish onboarding.
                 </p>
               </>
             ) : step === "notfound" ? null : (
@@ -304,7 +269,7 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
                 rel="noopener noreferrer"
                 className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[#1877f2] text-sm font-semibold text-white transition-colors hover:bg-[#166fe5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1877f2]/60 focus-visible:ring-offset-2"
               >
-                <MessageCircle className="h-4 w-4" /> Contact us on Facebook
+                <MessageCircle className="h-4 w-4" /> Contact Owner on Facebook
               </a>
 
               <button
@@ -359,50 +324,8 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
             </form>
           )}
 
-          {step === "create" && (
-            <form onSubmit={handleCreatePassword} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="new-password">Password</Label>
-                <PasswordInput
-                  id="new-password"
-                  value={password}
-                  onChange={setPassword}
-                  show={showPassword}
-                  onToggle={() => setShowPassword((prev) => !prev)}
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="confirm-password">Re-enter password</Label>
-                <PasswordInput
-                  id="confirm-password"
-                  value={confirm}
-                  onChange={setConfirm}
-                  show={showPassword}
-                  onToggle={() => setShowPassword((prev) => !prev)}
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <p className="text-[11px] text-muted-foreground">Use at least 6 characters.</p>
-
-              <Button type="submit" size="lg" className="w-full" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Creating…
-                  </>
-                ) : (
-                  <>
-                    Create password &amp; continue <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </Button>
-            </form>
-          )}
-
-          {step === "profile" && (
-            <form onSubmit={handleProfile} className="space-y-4">
+          {step === "onboarding" && (
+            <form onSubmit={handleOnboarding} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="full-name">Full name</Label>
                 <div className="relative">
@@ -438,19 +361,43 @@ export function LoginForm({ nextPath, deniedPath }: LoginFormProps) {
                 </div>
               </div>
 
+              <div className="space-y-1.5">
+                <Label htmlFor="new-password">Create password</Label>
+                <PasswordInput
+                  id="new-password"
+                  value={password}
+                  onChange={setPassword}
+                  show={showPassword}
+                  onToggle={() => setShowPassword((prev) => !prev)}
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <PasswordInput
+                  id="confirm-password"
+                  value={confirm}
+                  onChange={setConfirm}
+                  show={showPassword}
+                  onToggle={() => setShowPassword((prev) => !prev)}
+                  autoComplete="new-password"
+                />
+              </div>
+
               <p className="text-[11px] text-muted-foreground">
-                We&apos;ll email your account confirmation to{" "}
+                Use at least 8 characters. We&apos;ll email your account details to{" "}
                 <span className="font-medium text-foreground">{email}</span>.
               </p>
 
               <Button type="submit" size="lg" className="w-full" disabled={submitting}>
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Finishing…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Setting up…
                   </>
                 ) : (
                   <>
-                    Finish &amp; enter <ArrowRight className="h-4 w-4" />
+                    Save &amp; enter <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </Button>

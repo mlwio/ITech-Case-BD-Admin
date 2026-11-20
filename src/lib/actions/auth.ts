@@ -12,16 +12,11 @@ import {
   resetRateLimit,
 } from "@/lib/security/rate-limit";
 import { isValidBdPhone, normalizeBdPhone, sanitizeText } from "@/lib/security/validate";
-import { sendMail } from "@/lib/email/mailer";
-import { welcomeEmail } from "@/lib/email/templates";
+import { accountConfirmationEmail, sendMail } from "@/lib/mailer";
 
 export interface AuthActionResult {
   ok: boolean;
   message: string;
-  /** Account holder's display name — returned only after the caller proved ownership. */
-  name?: string;
-  /** True when the fresh account still needs a name/phone profile before entering. */
-  needsProfile?: boolean;
 }
 
 /**
@@ -165,24 +160,36 @@ export async function checkAccountAction(emailInput: string): Promise<AccountChe
 }
 
 /**
- * First-time password creation for an account the owner added. Only works while
- * the account has no password (invite or after a reset); signs the user in
- * straight away on success.
+ * First-time onboarding for an account the owner added (invite, where
+ * `passwordHash` is still null): captures the moderator's name, phone and a
+ * fresh password in a single step, persists them, signs them straight into the
+ * dashboard, then fires the automatic confirmation email. A mail failure is
+ * logged but never blocks sign-in.
  */
 export async function setPasswordAction(input: {
   email: string;
+  name: string;
+  phone: string;
   password: string;
   confirm: string;
 }): Promise<AuthActionResult> {
   const email = sanitizeText(input.email, 200).toLowerCase();
+  const name = sanitizeText(input.name, 120);
+  const phone = normalizeBdPhone(input.phone);
   const password = typeof input.password === "string" ? input.password : "";
   const confirm = typeof input.confirm === "string" ? input.confirm : "";
 
   if (!email) {
     return { ok: false, message: "Enter your email address." };
   }
-  if (password.length < 6) {
-    return { ok: false, message: "Password must be at least 6 characters." };
+  if (!name) {
+    return { ok: false, message: "Please enter your full name." };
+  }
+  if (!isValidBdPhone(phone)) {
+    return { ok: false, message: "Enter a valid Bangladeshi number, e.g. 01712345678." };
+  }
+  if (password.length < 8) {
+    return { ok: false, message: "Password must be at least 8 characters." };
   }
   if (password.length > 128) {
     return { ok: false, message: "Password is too long (max 128 characters)." };
@@ -207,7 +214,7 @@ export async function setPasswordAction(input: {
       return {
         ok: false,
         message:
-          "We couldn't set up a password for that email. If you already have one, sign in instead — otherwise ask the shop owner to add you.",
+          "We couldn't set up your account for that email. If you already have a password, sign in instead — otherwise ask the shop owner to add you.",
       };
     }
 
@@ -215,106 +222,18 @@ export async function setPasswordAction(input: {
       where: { userId: user.id, isActive: true },
     });
     if (!member) {
-      return { ok: false, message: "We couldn't set up a password for that email. Please ask the shop owner to add you." };
+      return { ok: false, message: "We couldn't set up your account for that email. Please ask the shop owner to add you." };
     }
 
     const passwordHash = await hashPassword(password);
-    await corePrisma.user.update({
+    const updated = await corePrisma.user.update({
       where: { id: user.id },
-      data: { passwordHash, lastActiveAt: new Date() },
+      data: { name, phone, passwordHash, lastActiveAt: new Date() },
     });
 
     await corePrisma.shopMember.update({
       where: { id: member.id },
       data: { joinedAt: member.joinedAt ?? new Date() },
-    });
-
-    resetRateLimit(gate.key);
-
-    // A brand-new invitee has no phone on file yet — hold off on creating the
-    // session and collect name + phone in a short profile step (the session is
-    // created there once the profile is complete). Accounts that are already
-    // complete sign in immediately.
-    if (!user.phone) {
-      return {
-        ok: true,
-        message: `Password created — welcome, ${user.name.split(" ")[0]}!`,
-        name: user.name,
-        needsProfile: true,
-      };
-    }
-
-    await createSession({
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      role: member.role,
-      shopId: member.shopId,
-      permissions: {
-        orders: member.canAccessOrders,
-        products: member.canAccessProducts,
-        customers: member.canAccessCustomers,
-        finance: member.canAccessFinance,
-        inventory: member.canAccessInventory,
-      },
-    });
-
-    return { ok: true, message: `Password created — welcome, ${user.name.split(" ")[0]}!` };
-  } catch (error) {
-    return failClosed("set-password", error);
-  }
-}
-
-/**
- * Final onboarding step for a freshly invited teammate: capture their name and
- * phone, persist them, open the session, and fire the automatic "account ready"
- * email. Re-verifies the just-created password so no half-authenticated state
- * can write profile data. A mail failure is logged but never blocks sign-in.
- */
-export async function completeProfileAction(input: {
-  email: string;
-  password: string;
-  name: string;
-  phone: string;
-}): Promise<AuthActionResult> {
-  const email = sanitizeText(input.email, 200).toLowerCase();
-  const password = typeof input.password === "string" ? input.password : "";
-  const name = sanitizeText(input.name, 120);
-  const phone = normalizeBdPhone(input.phone);
-
-  if (!email || !password) {
-    return { ok: false, message: "Your session expired. Please sign in again." };
-  }
-  if (!name) {
-    return { ok: false, message: "Please enter your full name." };
-  }
-  if (!isValidBdPhone(phone)) {
-    return { ok: false, message: "Enter a valid Bangladeshi number, e.g. 01712345678." };
-  }
-
-  const gate = authRateLimit("complete-profile", email);
-  if (!gate.ok) return { ok: false, message: gate.message };
-
-  if (!isDatabaseConfigured) {
-    return { ok: false, message: "No database attached yet." };
-  }
-
-  try {
-    const user = await corePrisma.user.findUnique({ where: { email } });
-    if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
-      return { ok: false, message: "Your session expired. Please sign in again." };
-    }
-
-    const member = await corePrisma.shopMember.findFirst({
-      where: { userId: user.id, isActive: true },
-    });
-    if (!member) {
-      return { ok: false, message: "This account is paused. Ask the shop owner for access." };
-    }
-
-    const updated = await corePrisma.user.update({
-      where: { id: user.id },
-      data: { name, phone, lastActiveAt: new Date() },
     });
 
     await createSession({
@@ -332,21 +251,32 @@ export async function completeProfileAction(input: {
       },
     });
 
-    const mail = welcomeEmail({ name: updated.name, email: updated.email });
-    const sent = await sendMail({
-      to: updated.email,
-      subject: mail.subject,
-      html: mail.html,
-      text: mail.text,
-    });
-    if (!sent.ok) {
-      console.warn(`[auth:complete-profile] welcome email not delivered (${sent.error})`);
+    resetRateLimit(gate.key);
+
+    // Confirmation email is a side-effect — never let it block the sign-in.
+    try {
+      const mail = accountConfirmationEmail({
+        name: updated.name,
+        email: updated.email,
+        phone,
+        password,
+      });
+      const sent = await sendMail({
+        to: updated.email,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+      if (!sent.ok) {
+        console.warn(`[auth:set-password] confirmation email not delivered (${sent.error})`);
+      }
+    } catch (error) {
+      console.warn("[auth:set-password] confirmation email threw", error);
     }
 
-    resetRateLimit(gate.key);
     return { ok: true, message: `All set — welcome, ${updated.name.split(" ")[0]}!` };
   } catch (error) {
-    return failClosed("complete-profile", error);
+    return failClosed("set-password", error);
   }
 }
 
