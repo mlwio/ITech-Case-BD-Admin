@@ -213,7 +213,7 @@ export function SettingsView({
     router.refresh();
   }
 
-  async function invite(input: { name: string; email: string }): Promise<boolean> {
+  async function invite(input: { email: string }): Promise<boolean> {
     const result = await inviteMemberAction({ ...input, role: "MODERATOR" });
     if (!result.ok) {
       toast.error(result.message);
@@ -435,8 +435,8 @@ export function SettingsView({
         </FadeIn>
 
         <p className="px-1 text-[11px] text-muted-foreground">
-          Role and permission changes save instantly. Add a moderator with just a name and email — they
-          create their own password the first time they sign in at{" "}
+          Role and permission changes save instantly. Add a moderator with just an email — they
+          create their own name, phone, and password the first time they sign in at{" "}
           <span className="font-medium">/login</span>. Use <span className="font-medium">Reset password</span>{" "}
           if they forget it.
         </p>
@@ -561,23 +561,21 @@ function PrefRow({
 function InviteMemberDialog({
   onInvite,
 }: {
-  onInvite: (input: { name: string; email: string }) => Promise<boolean>;
+  onInvite: (input: { email: string }) => Promise<boolean>;
 }) {
   const [open, setOpen] = React.useState(false);
-  const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [pending, setPending] = React.useState(false);
 
   async function submit() {
-    if (!name.trim() || !email.trim()) {
-      toast.error("Name and email are required");
+    if (!email.trim()) {
+      toast.error("Email is required");
       return;
     }
     setPending(true);
-    const ok = await onInvite({ name: name.trim(), email: email.trim() });
+    const ok = await onInvite({ email: email.trim() });
     setPending(false);
     if (!ok) return;
-    setName("");
     setEmail("");
     setOpen(false);
   }
@@ -593,20 +591,11 @@ function InviteMemberDialog({
         <DialogHeader>
           <DialogTitle>Add a moderator</DialogTitle>
           <DialogDescription>
-            Just enter their name and email. They set their own password the first time they sign in with
-            this email — no password to share.
+            Just enter their email. They set their own name, phone, and password the first time they
+            sign in with this email — no password to share.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="invite-name">Full name</Label>
-            <Input
-              id="invite-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Sadia Islam"
-            />
-          </div>
           <div className="space-y-1.5">
             <Label htmlFor="invite-email">Email</Label>
             <Input

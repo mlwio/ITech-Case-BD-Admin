@@ -100,7 +100,7 @@ function revalidateTeam() {
 /* -------------------------------------------------------------------------- */
 
 export async function inviteMemberAction(input: {
-  name: string;
+  name?: string;
   email: string;
   role: MemberRole;
   permissions?: Permissions;
@@ -108,12 +108,17 @@ export async function inviteMemberAction(input: {
   const session = await requireOwnerSession();
   if (!session) return DENIED;
 
-  const name = input.name.trim();
+  // Name is optional at invite time — the teammate fills in their own name and
+  // phone during first-time onboarding. When the owner skips it we fall back to
+  // the email's local part as a readable placeholder.
+  const rawName = (input.name ?? "").trim();
   const email = input.email.trim().toLowerCase();
 
-  if (!name || !email) {
-    return { ok: false, mode: "database", message: "Name and email are required." };
+  if (!email) {
+    return { ok: false, mode: "database", message: "Email is required." };
   }
+  const name = rawName || email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { ok: false, mode: "database", message: "Enter a valid email address." };
   }
