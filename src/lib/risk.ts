@@ -105,6 +105,54 @@ export function assessRisk(
   };
 }
 
+/**
+ * Pathao-style delivery breakdown for the phone currently on the form.
+ *
+ * "Received" = delivered; "Not received" = returned + cancelled; the remaining
+ * statuses are split into in-transit and still-pending. Returns `null` until the
+ * number is long enough to look up, so the panel stays hidden while typing.
+ */
+export interface DeliveryStats {
+  total: number;
+  delivered: number;
+  notReceived: number;
+  returned: number;
+  cancelled: number;
+  inTransit: number;
+  pending: number;
+  successRate: number;
+}
+
+export function deliveryStats(
+  phone: string,
+  history: OrderHistoryEntry[],
+): DeliveryStats | null {
+  const normalized = normalizePhone(phone);
+  if (normalized.length < 6) return null;
+
+  const relevant = history.filter((entry) => normalizePhone(entry.phone) === normalized);
+  const count = (status: OrderStatus) =>
+    relevant.filter((entry) => entry.status === status).length;
+
+  const delivered = count("DELIVERED");
+  const returned = count("RETURNED");
+  const cancelled = count("CANCELLED");
+  const inTransit = count("IN_TRANSIT");
+  const pending = count("PLACED") + count("CONFIRMED") + count("HOLD");
+  const closed = delivered + returned + cancelled;
+
+  return {
+    total: relevant.length,
+    delivered,
+    returned,
+    cancelled,
+    inTransit,
+    pending,
+    notReceived: returned + cancelled,
+    successRate: closed ? Math.round((delivered / closed) * 100) : 0,
+  };
+}
+
 /** Orders from the same number placed within the last `withinHours`. */
 export function findDuplicateOrders(
   phone: string,

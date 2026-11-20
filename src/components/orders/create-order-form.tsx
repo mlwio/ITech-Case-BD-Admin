@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
 import { MagicPasteBox } from "@/components/orders/magic-paste-box";
-import { DuplicateOrderAlert, RiskBadge } from "@/components/orders/risk-awareness";
+import { DeliveryHistoryPanel, DuplicateOrderAlert, RiskBadge } from "@/components/orders/risk-awareness";
 import {
   DEFAULT_DELIVERY_CHARGE,
   DELIVERY_PRESETS,
@@ -47,7 +47,7 @@ import {
   matchCatalogVariant,
   type ParsedOrderDraft,
 } from "@/lib/order-parser";
-import { assessRisk, findDuplicateOrders, normalizePhone, type OrderHistoryEntry } from "@/lib/risk";
+import { assessRisk, deliveryStats, findDuplicateOrders, normalizePhone, type OrderHistoryEntry } from "@/lib/risk";
 import { formatBDT, formatNumber, formatPhone } from "@/lib/format";
 import { IPHONE_MODELS, productModel } from "@/lib/catalog-meta";
 import {
@@ -141,6 +141,10 @@ export function CreateOrderForm({
 
   const activePhone = customerMode === "existing" ? selectedCustomer?.phone ?? "" : newCustomer.phone;
   const risk = React.useMemo(() => assessRisk(activePhone, orderHistory), [activePhone, orderHistory]);
+  const delivery = React.useMemo(
+    () => deliveryStats(activePhone, orderHistory),
+    [activePhone, orderHistory],
+  );
   const duplicates = React.useMemo(
     () => findDuplicateOrders(activePhone, orderHistory, 72),
     [activePhone, orderHistory],
@@ -608,6 +612,8 @@ export function CreateOrderForm({
                   </div>
                 </div>
               )}
+
+              <DeliveryHistoryPanel stats={delivery} />
             </CardContent>
           </Card>
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertTriangle, Clock3, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, PackageX, RotateCcw, ShieldAlert, ShieldCheck, ShieldX, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ORDER_STATUS_META } from "@/lib/constants";
-import type { DuplicateHit, RiskAssessment } from "@/lib/risk";
+import { formatNumber } from "@/lib/format";
+import type { DeliveryStats, DuplicateHit, RiskAssessment } from "@/lib/risk";
 import { cn } from "@/lib/utils";
 
 const TONE_VARIANT: Record<RiskAssessment["tone"], "success" | "warning" | "destructive" | "muted"> = {
@@ -41,6 +42,92 @@ export function RiskBadge({ assessment }: { assessment: RiskAssessment | null })
         {assessment.label}
       </Badge>
       <span className="text-[10px] text-muted-foreground">{detail}</span>
+    </div>
+  );
+}
+
+/** Pathao delivery breakdown shown once a customer phone is on the order form. */
+export function DeliveryHistoryPanel({ stats }: { stats: DeliveryStats | null }) {
+  if (!stats) return null;
+
+  const tiles = [
+    {
+      key: "total",
+      label: "Total parcels",
+      value: stats.total,
+      icon: Truck,
+      tone: "bg-slate-50 text-slate-700 dark:bg-slate-500/15 dark:text-slate-200",
+    },
+    {
+      key: "received",
+      label: "Received",
+      value: stats.delivered,
+      icon: CheckCircle2,
+      tone: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+    },
+    {
+      key: "not-received",
+      label: "Not received",
+      value: stats.notReceived,
+      icon: PackageX,
+      tone: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+    },
+    {
+      key: "returned",
+      label: "Returned",
+      value: stats.returned,
+      icon: RotateCcw,
+      tone: "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold">
+          <Truck className="h-3.5 w-3.5 text-primary" />
+          Pathao delivery history
+        </p>
+        {stats.total > 0 && (
+          <Badge
+            variant={stats.successRate >= 85 ? "success" : stats.successRate >= 60 ? "warning" : "destructive"}
+            className="tabular"
+          >
+            {stats.successRate}% success
+          </Badge>
+        )}
+      </div>
+
+      {stats.total === 0 ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          First-time buyer — no order history for this number in your shop yet.
+        </p>
+      ) : (
+        <>
+          <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {tiles.map((tile) => {
+              const Icon = tile.icon;
+              return (
+                <div key={tile.key} className="rounded-lg border border-border bg-card p-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn("flex h-6 w-6 items-center justify-center rounded-md", tile.tone)}>
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {tile.label}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-lg font-semibold tabular">{formatNumber(tile.value)}</p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            In transit {formatNumber(stats.inTransit)} · Still pending {formatNumber(stats.pending)}
+            {stats.cancelled > 0 ? ` · Cancelled ${formatNumber(stats.cancelled)}` : ""}
+          </p>
+        </>
+      )}
     </div>
   );
 }
