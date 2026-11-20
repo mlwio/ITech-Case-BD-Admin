@@ -1,0 +1,65 @@
+// ---------------------------------------------------------------------------
+// ITech Case BD — DATABASE 2 (Customers & CRM)
+//
+//   DATABASE_2_URL owns the customer directory:
+//     • Customer profiles (name, phone, address, delivery zone)
+//     • Aggregate order counters (totalOrders / deliveredCount / returnedCount)
+//
+// Generate with:  npx prisma generate --schema=prisma/schema.customers.prisma
+// Push schema :  npx prisma db push  --schema=prisma/schema.customers.prisma
+//
+// The client is emitted to `node_modules/.prisma/customers-client` and consumed
+// as `customersPrisma` from `src/lib/prisma-customers.ts`.
+//
+// CROSS-DATABASE DECOUPLING: order history now lives in Database 1, so the
+// former `orders Order[]` relation is gone. A customer's orders are fetched
+// with `ordersPrisma.order.findMany({ where: { customerId } })` and merged in
+// TypeScript. The counters below are maintained by the order server actions.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/customers-client"
+}
+
+datasource db {
+  provider  = "mongodb"
+  url       = env("DATABASE_2_URL")
+  directUrl = env("DIRECT_2_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums (stored as strings on MongoDB)
+// ---------------------------------------------------------------------------
+
+enum DeliveryZone {
+  DHAKA
+  CHITTAGONG
+  SYLHET
+  OTHER
+}
+
+// ---------------------------------------------------------------------------
+// Customers
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  shopId         String       @db.ObjectId
+  name           String
+  phone          String
+  address        String
+  zone           DeliveryZone @default(DHAKA)
+  /// Maintained by `createOrderAction` (application-level, cross-database).
+  totalOrders    Int          @default(0)
+  /// Maintained on DELIVERED status transitions.
+  deliveredCount Int          @default(0)
+  /// Maintained on RETURNED status transitions.
+  returnedCount  Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([shopId, phone])
+  @@index([shopId])
+  @@map("customers")
+}

@@ -1,0 +1,178 @@
+// ---------------------------------------------------------------------------
+// ITech Case BD — DATABASE 1 (Orders & Fulfillment)
+//
+//   DATABASE_1_URL owns everything order-scoped:
+//     • Orders inbox / fulfilment   → Order, OrderItem
+//     • Order-scoped notes & audit  → OrderAuditLog
+//     • Parcel lifecycle timeline   → ParcelTrackingEvent
+//     • Raw courier webhook audit   → PathaoWebhookEvent
+//
+// Generate with:  npx prisma generate --schema=prisma/schema.orders.prisma
+// Push schema :  npx prisma db push  --schema=prisma/schema.orders.prisma
+//
+// The client is emitted to `node_modules/.prisma/orders-client` and consumed
+// as `ordersPrisma` from `src/lib/prisma-orders.ts`.
+//
+// CROSS-DATABASE DECOUPLING: `customerId` lives in Database 2 and `variantId`
+// in Database 3, so the Prisma `@relation` directives for them are gone. They
+// are kept as indexed scalar ids and resolved with batch application-level
+// lookups (O(N) Map joins) plus the snapshot columns stored on each row.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/orders-client"
+}
+
+datasource db {
+  provider  = "mongodb"
+  url       = env("DATABASE_1_URL")
+  directUrl = env("DIRECT_1_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums (stored as strings on MongoDB)
+// ---------------------------------------------------------------------------
+
+enum OrderStatus {
+  PLACED
+  CONFIRMED
+  HOLD
+  CANCELLED
+  IN_TRANSIT
+  DELIVERED
+  RETURNED
+}
+
+enum OrderSource {
+  MESSENGER
+  WHATSAPP
+  TIKTOK
+  WEBSITE
+  LANDING_PAGE
+  CALL
+}
+
+enum DeliveryZone {
+  DHAKA
+  CHITTAGONG
+  SYLHET
+  OTHER
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+model Order {
+  id               String      @id @default(auto()) @map("_id") @db.ObjectId
+  shopId           String      @db.ObjectId
+  orderNumber      String      @unique
+  /// Database 2 (`customersPrisma`) reference — no Prisma relation by design.
+  customerId       String      @db.ObjectId
+  status           OrderStatus @default(PLACED)
+  source           OrderSource @default(MESSENGER)
+  deliveryZone     DeliveryZone @default(DHAKA)
+  deliveryCharge   Float       @default(0)
+  discount         Float       @default(0)
+  subtotal         Float       @default(0)
+  totalAmount      Float       @default(0)
+  courierName      String      @default("Pathao")
+  consignmentId    String?
+  pathaoStatus     String?
+  courierFee       Float       @default(0)
+  isPaymentSettled Boolean     @default(false)
+  note             String?
+  /// Database 3 (`corePrisma.user`) reference — no Prisma relation by design.
+  createdById      String      @db.ObjectId
+  placedAt         DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  items          OrderItem[]
+  auditLogs      OrderAuditLog[]
+  trackingEvents ParcelTrackingEvent[]
+
+  // Covers the orders inbox (filter by status, newest first) in one index.
+  @@index([shopId, status, placedAt])
+  @@index([shopId, placedAt])
+  @@index([customerId])
+  @@index([consignmentId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  orderId       String  @db.ObjectId
+  /// Database 3 (`corePrisma.productVariant`) reference — no Prisma relation.
+  variantId     String  @db.ObjectId
+  /// Snapshot of the catalog at purchase time so order history never depends on
+  /// a live cross-database lookup.
+  productName   String
+  variantName   String
+  sku           String
+  quantity      Int     @default(1)
+  unitPrice     Float
+  unitCostPrice Float   @default(0)
+
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+// ---------------------------------------------------------------------------
+// Order-scoped audit & timeline
+// ---------------------------------------------------------------------------
+
+model OrderAuditLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  shopId      String   @db.ObjectId
+  orderId     String   @db.ObjectId
+  action      String
+  details     String
+  performedBy String
+  createdAt   DateTime @default(now())
+
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([shopId, createdAt])
+  @@map("order_audit_logs")
+}
+
+/// Immutable, append-only Pathao lifecycle feed that powers the parcel state
+/// timeline inside the order drawer.
+model ParcelTrackingEvent {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  shopId        String   @db.ObjectId
+  orderId       String   @db.ObjectId
+  consignmentId String?
+  status        String
+  message       String?
+  source        String   @default("PATHAO")
+  occurredAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([consignmentId])
+  @@index([shopId, occurredAt])
+  @@map("parcel_tracking_events")
+}
+
+/// Raw webhook deliveries from Pathao, kept for auditing & replay.
+model PathaoWebhookEvent {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  consignmentId  String?
+  orderId        String?
+  status         String?
+  signatureValid Boolean  @default(false)
+  payload        String
+  receivedAt     DateTime @default(now())
+
+  @@index([consignmentId])
+  @@index([receivedAt])
+  @@map("pathao_webhook_events")
+}
