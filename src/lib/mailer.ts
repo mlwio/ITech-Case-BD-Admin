@@ -22,7 +22,9 @@ import nodemailer, { type Transporter } from "nodemailer";
 
 const SMTP_HOST = process.env.SMTP_HOST?.trim() || "smtp.gmail.com";
 const SMTP_USER = process.env.SMTP_USER?.trim();
-const SMTP_PASS = process.env.SMTP_PASS;
+// Google app passwords are shown grouped as "xxxx xxxx xxxx xxxx"; SMTP auth
+// expects the 16 characters without spaces, so normalise whatever is pasted in.
+const SMTP_PASS = process.env.SMTP_PASS?.replace(/\s+/g, "");
 const SMTP_PORT = Number(process.env.SMTP_PORT ?? 465) || 465;
 const SMTP_SECURE =
   (process.env.SMTP_SECURE ?? "").toLowerCase() === "true" || SMTP_PORT === 465;
