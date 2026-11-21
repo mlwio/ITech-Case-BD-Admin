@@ -1,7 +1,7 @@
 /**
  * Phase 2 — Idempotent 3-database migration.
  *
- *   Legacy monolithic DB (DATABASE_URL)  →  three isolated databases:
+ *   Legacy monolithic DB (LEGACY_LOCAL_DATABASE_URL) → three isolated databases:
  *     • DATABASE_1  ordersPrisma     — Order, OrderItem, OrderAuditLog,
  *                                      ParcelTrackingEvent, PathaoWebhookEvent
  *     • DATABASE_2  customersPrisma  — Customer
@@ -23,29 +23,26 @@ import { PrismaClient as LegacyClient } from "@prisma/client";
 import { PrismaClient as OrdersClient } from "../node_modules/.prisma/orders-client";
 import { PrismaClient as CustomersClient } from "../node_modules/.prisma/customers-client";
 import { PrismaClient as CoreClient } from "../node_modules/.prisma/core-client";
+import { loadEnvConfig } from "@next/env";
+import { applyDatabaseUrlAliases } from "../src/lib/db-urls";
 
 /* -------------------------------------------------------------------------- */
 /*  Environment                                                               */
 /* -------------------------------------------------------------------------- */
 
-// Node 20.6+ ships `process.loadEnvFile`; load `.env` so `npx tsx` works
-// standalone without an --env-file flag.
-try {
-  (process as unknown as { loadEnvFile?: (path?: string) => void }).loadEnvFile?.(".env");
-} catch {
-  /* .env is optional — fall back to whatever is already in process.env */
-}
+loadEnvConfig(process.cwd());
+applyDatabaseUrlAliases(process.env);
 
-const legacyUrl = process.env.DATABASE_URL;
+const legacyUrl = process.env.LEGACY_LOCAL_DATABASE_URL;
 if (!legacyUrl) {
-  console.error("✖ DATABASE_URL (legacy migration source) is not set.");
+  console.error("✖ LEGACY_LOCAL_DATABASE_URL (migration source) is not set.");
   process.exit(1);
 }
 
 const legacy = new LegacyClient({ datasources: { db: { url: legacyUrl } } });
 // Phase 1 already wrote the `FinancialLedger` collection into the legacy
-// monolith database (it was Database 3 before the physical split), so it is
-// read with the core client pointed back at DATABASE_URL.
+// monolith database, so it is read with the core client pointed at the
+// explicit local migration source.
 const legacyCore = new CoreClient({ datasources: { db: { url: legacyUrl } } });
 // The three targets read DATABASE_1_URL / DATABASE_2_URL / DATABASE_3_URL
 // straight from the generated clients' datasource env().
@@ -82,8 +79,8 @@ const jobs: MigrationJob[] = [
   { source: "inventoryMovement", target: "inventoryMovement", db: "DATABASE_3", targetClient: core as unknown as Record<string, unknown> },
   { source: "courierCredential", target: "courierCredential", db: "DATABASE_3", targetClient: core as unknown as Record<string, unknown> },
   { source: "expenseLog", target: "expense", db: "DATABASE_3", targetClient: core as unknown as Record<string, unknown> },
-  // Phase 1 ledger rows already live in the legacy monolith DB → read via the
-  // core client bound to DATABASE_URL, upserted into DATABASE_3.
+  // Ledger rows live in the legacy monolith DB → read via the core client
+  // bound to LEGACY_LOCAL_DATABASE_URL, upserted into DATABASE_3.
   {
     source: "financialLedger",
     target: "financialLedger",
@@ -160,6 +157,47 @@ async function main() {
     console.log(`  ${pad(job.db, 11)} ${pad(job.source + " → " + job.target, 34)} ${source} ✔`);
   }
 
+  const adminEmail = "itechcasebd@gmail.com";
+  let admin = await core.user.findUnique({ where: { email: adminEmail } });
+  if (!admin) {
+    const ownerMembership = await core.shopMember.findFirst({
+      where: { role: "OWNER", isActive: true },
+      orderBy: { invitedAt: "asc" },
+    });
+    const existingOwner = ownerMembership
+      ? await core.user.findUnique({ where: { id: ownerMembership.userId } })
+      : null;
+    if (!ownerMembership || !existingOwner?.passwordHash) {
+      throw new Error(
+        `Cannot ensure ${adminEmail}: no migrated active OWNER with an existing password hash was found.`,
+      );
+    }
+    admin = await core.user.update({
+      where: { id: existingOwner.id },
+      data: { email: adminEmail, inviteStatus: "ACTIVE" },
+    });
+  } else if (admin.inviteStatus !== "ACTIVE") {
+    admin = await core.user.update({
+      where: { id: admin.id },
+      data: { inviteStatus: "ACTIVE" },
+    });
+  }
+
+  const activeOwnerMembership = await core.shopMember.findFirst({
+    where: { userId: admin.id, role: "OWNER", isActive: true },
+  });
+  if (!admin.passwordHash || !activeOwnerMembership) {
+    throw new Error(`Admin validation failed for ${adminEmail}.`);
+  }
+  const ownerShop = await core.shop.findUnique({
+    where: { id: activeOwnerMembership.shopId },
+    select: { id: true },
+  });
+  if (!ownerShop) throw new Error(`No Shop record exists for ${adminEmail}'s active OWNER membership.`);
+  console.log(
+    `\nAdmin verified: ${adminEmail}; password hash present; ACTIVE; Shop and active OWNER membership present.`,
+  );
+
   /* ---------------------------------------------------------------------- */
   /*  Verification — row-count parity                                        */
   /* ---------------------------------------------------------------------- */
@@ -174,6 +212,17 @@ async function main() {
         row.ok ? "OK" : "✖ MISMATCH"
       }`,
     );
+  }
+  const clusterTotals = report.reduce(
+    (totals, row) => {
+      totals[row.db] = (totals[row.db] || 0) + row.target;
+      return totals;
+    },
+    {} as Record<string, number>,
+  );
+  console.log("\n── Migrated row totals ─────────────────────────────────────────────");
+  for (const database of ["DATABASE_1", "DATABASE_2", "DATABASE_3"]) {
+    console.log(`  ${pad(database, 11)} ${clusterTotals[database] ?? 0} rows`);
   }
 
   /* ---------------------------------------------------------------------- */

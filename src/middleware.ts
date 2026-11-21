@@ -90,9 +90,10 @@ export const config = {
    *   • `/api/moderators/*`             — invite registration endpoint
    *   • `/api/webhooks/*`               — called by Pathao's servers, verified
    *                                        by HMAC signature, not a session
+   *   • `/api/health/db`                — public masked database diagnostics
    * plus Next.js internals and static assets.
    */
   matcher: [
-    "/((?!login|moderator|api/auth|api/moderators|api/webhooks|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|woff|woff2|ttf)$).*)",
+    "/((?!login|moderator|api/auth|api/moderators|api/webhooks|api/health/db|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|woff|woff2|ttf)$).*)",
   ],
 };

@@ -1,5 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 import { hashPassword } from "../src/lib/auth/password";
+import { resolveCoreDatabaseUrl } from "../src/lib/db-urls";
 
 loadEnvConfig(process.cwd());
 
@@ -7,10 +8,10 @@ async function seedAdmin() {
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
   const name = process.env.ADMIN_NAME?.trim() || "Administrator";
-  const databaseUrl = process.env.DATABASE_3_URL || process.env.CORE_DATABASE_URL;
+  const databaseUrl = resolveCoreDatabaseUrl();
 
   if (!databaseUrl) {
-    throw new Error("DATABASE_3_URL or CORE_DATABASE_URL must target the core database.");
+    throw new Error("Configure DATABASE_3_URL, CORE_DATABASE_URL, or MONGODB_URI for the core database.");
   }
   if (!email || !password) {
     throw new Error("Set ADMIN_EMAIL and ADMIN_PASSWORD before running the admin seed.");

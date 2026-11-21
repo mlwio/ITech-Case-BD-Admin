@@ -1,4 +1,5 @@
 import { PrismaClient as CorePrismaClient } from "prisma-core-client";
+import { applyDatabaseUrlAliases } from "@/lib/db-urls";
 
 /**
  * Database 3 — Core Catalog, Finance, Inventory & Admin client (`corePrisma`).
@@ -22,7 +23,7 @@ const globalForPrisma = globalThis as unknown as {
   corePrisma: CorePrismaClient | undefined;
 };
 
-const coreDatabaseUrl = process.env.DATABASE_3_URL || process.env.CORE_DATABASE_URL;
+const coreDatabaseUrl = applyDatabaseUrlAliases().core;
 
 export const corePrisma =
   globalForPrisma.corePrisma ??

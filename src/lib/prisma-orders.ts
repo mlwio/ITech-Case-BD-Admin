@@ -1,4 +1,5 @@
 import { PrismaClient } from "prisma-orders-client";
+import { applyDatabaseUrlAliases } from "@/lib/db-urls";
 
 /**
  * Database 1 — Orders & Fulfillment client (`ordersPrisma`).
@@ -15,7 +16,7 @@ const globalForPrisma = globalThis as unknown as {
   ordersPrisma: PrismaClient | undefined;
 };
 
-const ordersDatabaseUrl = process.env.DATABASE_1_URL;
+const ordersDatabaseUrl = applyDatabaseUrlAliases().orders;
 
 export const ordersPrisma =
   globalForPrisma.ordersPrisma ??
@@ -29,6 +30,6 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /** True when Database 1 (Orders) has a connection string configured. */
-export const isOrdersDatabaseConfigured = Boolean(process.env.DATABASE_1_URL);
+export const isOrdersDatabaseConfigured = Boolean(ordersDatabaseUrl);
 
 export type { Prisma } from "prisma-orders-client";

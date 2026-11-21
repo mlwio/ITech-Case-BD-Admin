@@ -1,5 +1,10 @@
 import "server-only";
 import { MongoClient, type Db } from "mongodb";
+import {
+  resolveCoreDatabaseUrl,
+  resolveCustomersDatabaseUrl,
+  resolveOrdersDatabaseUrl,
+} from "@/lib/db-urls";
 
 export type NativeDatabaseName = "core" | "orders" | "customers";
 
@@ -20,11 +25,11 @@ const cache =
 function databaseUrl(name: NativeDatabaseName): string | undefined {
   switch (name) {
     case "core":
-      return process.env.DATABASE_3_URL || process.env.CORE_DATABASE_URL;
+      return resolveCoreDatabaseUrl();
     case "orders":
-      return process.env.DATABASE_1_URL;
+      return resolveOrdersDatabaseUrl();
     case "customers":
-      return process.env.DATABASE_2_URL;
+      return resolveCustomersDatabaseUrl();
   }
 }
 
