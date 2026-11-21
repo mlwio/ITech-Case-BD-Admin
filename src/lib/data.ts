@@ -1,6 +1,7 @@
 import { corePrisma, isCoreDatabaseConfigured } from "./prisma";
 import { customersPrisma, isCustomersDatabaseConfigured } from "./prisma-customers";
 import { ordersPrisma, isOrdersDatabaseConfigured } from "./prisma-orders";
+import { mergePathaoCredential } from "./couriers/credential";
 import type {
   CourierCredential,
   CourierCredentialPublic,
@@ -480,17 +481,18 @@ export async function getCourierCredential(): Promise<DataResult<CourierCredenti
       if (!row) {
         const shop = await corePrisma.shop.findFirst({ orderBy: { createdAt: "asc" } });
         if (!shop) throw new Error("No shop configured");
+        const fromEnv = mergePathaoCredential(null);
         return {
           id: "",
           shopId: shop.id,
           provider: "PATHAO",
-          environment: "SANDBOX",
-          clientId: "",
-          clientSecret: "",
-          username: "",
-          password: "",
-          storeId: "",
-          webhookSecret: "",
+          environment: fromEnv.environment,
+          clientId: fromEnv.clientId ?? "",
+          clientSecret: fromEnv.clientSecret ?? "",
+          username: fromEnv.username ?? "",
+          password: fromEnv.password ?? "",
+          storeId: fromEnv.storeId ?? "",
+          webhookSecret: fromEnv.webhookSecret ?? "",
           accessToken: null,
           refreshToken: null,
           accessTokenExpiresAt: null,
@@ -502,17 +504,18 @@ export async function getCourierCredential(): Promise<DataResult<CourierCredenti
           lastTestMessage: null,
         } satisfies CourierCredential;
       }
+      const credential = mergePathaoCredential(row);
       return {
         id: row.id,
         shopId: row.shopId,
         provider: "PATHAO",
-        environment: row.environment,
-        clientId: row.clientId ?? "",
-        clientSecret: row.clientSecret ?? "",
-        username: row.username ?? "",
-        password: row.password ?? "",
-        storeId: row.storeId ?? "",
-        webhookSecret: row.webhookSecret ?? "",
+        environment: credential.environment,
+        clientId: credential.clientId ?? "",
+        clientSecret: credential.clientSecret ?? "",
+        username: credential.username ?? "",
+        password: credential.password ?? "",
+        storeId: credential.storeId ?? "",
+        webhookSecret: credential.webhookSecret ?? "",
         accessToken: row.accessToken,
         refreshToken: row.refreshToken,
         accessTokenExpiresAt: row.accessTokenExpiresAt?.toISOString() ?? null,
@@ -601,6 +604,7 @@ export async function getFinancialLedger(limit = 1000): Promise<DataResult<Finan
         productRevenue: num(row.productRevenue),
         productCost: num(row.productCost),
         deliveryCharge: num(row.deliveryCharge),
+        codFee: num(row.codFee),
         netProfit: num(row.netProfit),
         note: row.note,
         collectedAt: row.collectedAt?.toISOString() ?? null,

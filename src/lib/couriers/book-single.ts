@@ -5,6 +5,7 @@ import { getAuthSession } from "@/lib/auth/session";
 import { PATHAO_DEFAULT_ITEM_WEIGHT } from "@/lib/constants";
 import { pathaoItemDescription } from "@/lib/catalog-meta";
 import { matchPathaoLocation } from "@/lib/couriers/pathao-locations";
+import { loadPathaoCredential } from "@/lib/couriers/credential";
 import {
   PathaoApiError,
   createPathaoOrder,
@@ -53,42 +54,49 @@ export interface BookingResult extends ActionResult {
   fieldErrors?: Record<string, string[]>;
 }
 
-/** Reads the stored credential row and refreshes the access token if needed. */
+/**
+ * Reads the stored credential row (falling back to `PATHAO_*` environment
+ * variables for anything the row is missing) and refreshes the access token
+ * when the cached one is stale.
+ */
 export async function authorize(shopId: string): Promise<
   | { ok: true; credential: { environment: PathaoEnvironment; storeId: string | null; accessToken: string } }
   | { ok: false; message: string; fieldErrors?: Record<string, string[]> }
 > {
-  const row = await corePrisma.courierCredential.findUnique({ where: { shopId } });
-  if (!row || !isCredentialConfigured(row)) {
+  const { row, credential } = await loadPathaoCredential(shopId);
+  if (!isCredentialConfigured(credential)) {
     return {
       ok: false,
-      message: "Pathao is not connected yet — add your Client ID, Secret and merchant login in the Courier API Hub.",
+      message:
+        "Pathao is not connected yet — add your Client ID, Secret and merchant login in the Courier API Hub (or set the PATHAO_* variables in the environment).",
     };
   }
 
-  const environment = row.environment;
+  const environment = credential.environment;
 
   // Reuse the cached token while it is still valid; otherwise issue a fresh one.
   const stillValid =
-    row.accessToken &&
+    row?.accessToken &&
     row.accessTokenExpiresAt &&
     row.accessTokenExpiresAt.getTime() - Date.now() > 60_000;
 
-  if (stillValid && row.accessToken) {
-    return { ok: true, credential: { environment, storeId: row.storeId, accessToken: row.accessToken } };
+  if (stillValid && row?.accessToken) {
+    return { ok: true, credential: { environment, storeId: credential.storeId, accessToken: row.accessToken } };
   }
 
   try {
-    const tokens = await issueToken(row);
-    await corePrisma.courierCredential.update({
-      where: { shopId },
-      data: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken ?? row.refreshToken,
-        accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
-      },
-    });
-    return { ok: true, credential: { environment, storeId: row.storeId, accessToken: tokens.accessToken } };
+    const tokens = await issueToken(credential);
+    if (row) {
+      await corePrisma.courierCredential.update({
+        where: { shopId },
+        data: {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken ?? row.refreshToken,
+          accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
+        },
+      });
+    }
+    return { ok: true, credential: { environment, storeId: credential.storeId, accessToken: tokens.accessToken } };
   } catch (error) {
     const apiError = error as PathaoApiError;
     return { ok: false, message: apiError.message, fieldErrors: apiError.fieldErrors };

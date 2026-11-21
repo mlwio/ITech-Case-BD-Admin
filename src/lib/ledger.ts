@@ -1,12 +1,14 @@
 import { corePrisma } from "@/lib/prisma";
+import { computeCodFee, computeReturnFee, resolvePathaoFeePolicy } from "@/lib/couriers/fees";
 
 /**
  * Automatic profit / loss ledger engine (Database 3).
  *
  * Every delivered order books an `ORDER_PROFIT` row (revenue, COGS, delivery
- * fee and net profit) and every returned parcel books a `RETURN_DELIVERY_LOSS`
- * row (the courier's return fee is the loss). Cancelled orders never keep a
- * pending row, so they never pollute profit or loss.
+ * fee, Pathao's COD collection fee and net profit) and every returned parcel
+ * books a `RETURN_DELIVERY_LOSS` row (the courier's return charge is the loss).
+ * Cancelled orders never keep a pending row, so they never pollute profit or
+ * loss.
  *
  * These helpers are deliberately plain (no `"use server"`) and always swallow
  * their own errors at the call site so a ledger hiccup can never block an order
@@ -52,14 +54,17 @@ export interface DeliveredLedgerInput {
  *   productRevenue = subtotal − discount
  *   productCost    = Σ(unitCostPrice × quantity)
  *   deliveryFee    = courierFee > 0 ? courierFee : deliveryCharge
- *   netProfit      = (totalAmount − deliveryFee) − productCost
+ *   codFee         = totalAmount × PATHAO_COD_FEE_PERCENT% (Pathao's cut)
+ *   netProfit      = totalAmount − deliveryFee − codFee − productCost
  */
 export async function recordDeliveredLedger(input: DeliveredLedgerInput): Promise<void> {
   const productRevenue = Number(input.subtotal ?? 0) - Number(input.discount ?? 0);
   const productCost = computeProductCost(input.items);
   const deliveryCharge = resolveActualDeliveryFee(Number(input.courierFee ?? 0), Number(input.deliveryCharge ?? 0));
   const totalAmount = Number(input.totalAmount ?? 0);
-  const netProfit = totalAmount - deliveryCharge - productCost;
+  const policy = resolvePathaoFeePolicy();
+  const codFee = computeCodFee(totalAmount, policy);
+  const netProfit = totalAmount - deliveryCharge - codFee - productCost;
   const collectionStatus: "COLLECTED" | "PENDING" = input.isPaymentSettled ? "COLLECTED" : "PENDING";
   const collectedAt = input.isPaymentSettled ? new Date() : null;
 
@@ -74,6 +79,7 @@ export async function recordDeliveredLedger(input: DeliveredLedgerInput): Promis
     productRevenue,
     productCost,
     deliveryCharge,
+    codFee,
     netProfit,
     collectedAt,
     collectedBy: input.isPaymentSettled ? input.performedBy ?? null : null,
@@ -82,7 +88,10 @@ export async function recordDeliveredLedger(input: DeliveredLedgerInput): Promis
   await corePrisma.financialLedger.upsert({
     where: { orderId: input.orderId },
     update: data,
-    create: { ...data, note: "Delivered — COD booked to profit" },
+    create: {
+      ...data,
+      note: `Delivered — COD booked to profit (Pathao fees: delivery ৳${deliveryCharge}, COD ${policy.codFeePercent}% → ৳${codFee})`,
+    },
   });
 }
 
@@ -98,10 +107,15 @@ export interface ReturnedLedgerInput {
 
 /**
  * Books the loss row for a returned parcel — the courier still charges for the
- * failed delivery (and the return trip), and no product revenue is collected.
+ * failed delivery, and no product revenue is collected.
+ *
+ *   returnFee = (courierFee else deliveryCharge) × PATHAO_RETURN_FEE_PERCENT%
+ *   netProfit = −returnFee
  */
 export async function recordReturnedLedger(input: ReturnedLedgerInput): Promise<void> {
-  const returnFee = resolveActualDeliveryFee(Number(input.courierFee ?? 0), Number(input.deliveryCharge ?? 0));
+  const policy = resolvePathaoFeePolicy();
+  const billedFee = resolveActualDeliveryFee(Number(input.courierFee ?? 0), Number(input.deliveryCharge ?? 0));
+  const returnFee = computeReturnFee(billedFee, policy);
 
   const data = {
     shopId: input.shopId,
@@ -113,9 +127,10 @@ export async function recordReturnedLedger(input: ReturnedLedgerInput): Promise<
     collectedAmount: 0,
     productRevenue: 0,
     productCost: 0,
+    codFee: 0,
     deliveryCharge: returnFee,
     netProfit: -returnFee,
-    note: "Parcel returned — delivery charge deducted",
+    note: `Parcel returned — Pathao return charge ${policy.returnFeePercent}% of the ৳${billedFee} delivery fee`,
     collectedAt: null,
     collectedBy: null,
   };

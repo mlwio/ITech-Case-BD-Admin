@@ -141,7 +141,7 @@ export function FinanceView({
       if (entry.collectionStatus === "COLLECTED") collected += entry.collectedAmount;
       else if (entry.collectionStatus === "PENDING") pending += entry.collectedAmount;
       if (entry.type === "ORDER_PROFIT" || entry.type === "RETURN_DELIVERY_LOSS") {
-        charges += entry.deliveryCharge;
+        charges += entry.deliveryCharge + entry.codFee;
       }
       net += entry.netProfit;
     }
@@ -438,7 +438,7 @@ export function FinanceView({
           </FadeIn>
           <FadeIn delay={0.08}>
             <StatCard
-              label="Delivery & return charges"
+              label="Pathao charges (delivery + COD)"
               value={formatBDT(ledgerStats.charges)}
               icon={Receipt}
               hint="deducted on delivered + returned parcels"
@@ -791,7 +791,7 @@ export function FinanceView({
                         <TableHead>Type</TableHead>
                         <TableHead className="text-right">Collected</TableHead>
                         <TableHead className="hidden text-right sm:table-cell">Product cost</TableHead>
-                        <TableHead className="hidden text-right sm:table-cell">Delivery</TableHead>
+                        <TableHead className="hidden text-right sm:table-cell">Delivery / COD</TableHead>
                         <TableHead className="text-right">Net</TableHead>
                         <TableHead>COD status</TableHead>
                         <TableHead className="pr-4 text-right sm:pr-5">Action</TableHead>
@@ -834,6 +834,11 @@ export function FinanceView({
                             </TableCell>
                             <TableCell className="hidden text-right tabular text-muted-foreground sm:table-cell">
                               {formatBDT(entry.deliveryCharge)}
+                              {entry.codFee > 0 && (
+                                <p className="text-[10px] font-normal text-muted-foreground/80">
+                                  +COD {formatBDT(entry.codFee)}
+                                </p>
+                              )}
                             </TableCell>
                             <TableCell
                               className={cn(

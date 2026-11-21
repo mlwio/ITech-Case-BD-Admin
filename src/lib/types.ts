@@ -245,9 +245,12 @@ export interface FinancialLedgerEntry {
   productRevenue: number;
   /** Σ(unitCostPrice × quantity) */
   productCost: number;
-  /** Actual delivery fee deducted (courierFee, else the order's charge). */
+  /** Actual delivery fee deducted (courierFee, else the order's charge; the
+   * return charge on a returned parcel). */
   deliveryCharge: number;
-  /** (totalAmount − deliveryCharge) − productCost, or −returnFee on a return. */
+  /** Pathao's COD collection fee kept out of the collected cash. */
+  codFee: number;
+  /** (totalAmount − deliveryCharge − codFee) − productCost, or −returnFee on a return. */
   netProfit: number;
   note: string | null;
   collectedAt: string | null;

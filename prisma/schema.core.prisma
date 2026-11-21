@@ -318,7 +318,9 @@ model FinancialLedger {
   productCost     Float @default(0)
   /// actual delivery fee (courierFee, else the order's delivery charge)
   deliveryCharge  Float @default(0)
-  /// (totalAmount − deliveryCharge) − productCost, or −returnFee on a return.
+  /// Pathao's COD collection fee kept out of the collected cash.
+  codFee          Float @default(0)
+  /// (totalAmount − deliveryCharge − codFee) − productCost, or −returnFee on a return.
   netProfit       Float @default(0)
 
   note        String?

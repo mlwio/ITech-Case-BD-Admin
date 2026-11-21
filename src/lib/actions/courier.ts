@@ -21,6 +21,7 @@ import {
   isCredentialConfigured,
   issueToken,
 } from "@/lib/couriers/pathao";
+import { loadPathaoCredential } from "@/lib/couriers/credential";
 import type { OrderStatus, ParcelTrackingEvent, PathaoEnvironment, PathaoStore } from "@/lib/types";
 
 // Booking helpers live in a plain (non-"use server") module so they are not
@@ -161,9 +162,9 @@ export async function testPathaoConnectionAction(): Promise<TestConnectionResult
 
   try {
     const { shop } = await resolveTenancy(session.shopId);
-    const row = await corePrisma.courierCredential.findUnique({ where: { shopId: shop.id } });
+    const { row, credential } = await loadPathaoCredential(shop.id);
 
-    if (!row || !isCredentialConfigured(row)) {
+    if (!isCredentialConfigured(credential)) {
       return {
         ok: false,
         mode: "database",
@@ -171,28 +172,30 @@ export async function testPathaoConnectionAction(): Promise<TestConnectionResult
       };
     }
 
-    const tokens = await issueToken(row);
+    const tokens = await issueToken(credential);
     const expiresAt = new Date(Date.now() + tokens.expiresIn * 1000);
 
-    await corePrisma.courierCredential.update({
-      where: { shopId: shop.id },
-      data: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken ?? row.refreshToken,
-        accessTokenExpiresAt: expiresAt,
-        lastTestedAt: new Date(),
-        lastTestStatus: "SUCCESS",
-        lastTestMessage: "Token issued and pickup stores synced",
-      },
-    });
+    if (row) {
+      await corePrisma.courierCredential.update({
+        where: { shopId: shop.id },
+        data: {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken ?? row.refreshToken,
+          accessTokenExpiresAt: expiresAt,
+          lastTestedAt: new Date(),
+          lastTestStatus: "SUCCESS",
+          lastTestMessage: "Token issued and pickup stores synced",
+        },
+      });
+    }
 
-    const stores = await fetchStores(row.environment, tokens.accessToken);
+    const stores = await fetchStores(credential.environment, tokens.accessToken);
 
     revalidateCourierSurfaces();
     return {
       ok: true,
       mode: "database",
-      message: `Connected to Pathao (${row.environment.toLowerCase()}). ${stores.length} pickup store(s) synced.`,
+      message: `Connected to Pathao (${credential.environment.toLowerCase()}). ${stores.length} pickup store(s) synced.`,
       stores,
       expiresAt: expiresAt.toISOString(),
     };

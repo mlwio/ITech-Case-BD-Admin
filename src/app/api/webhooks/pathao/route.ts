@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     const credential = await corePrisma.courierCredential.findFirst({
       select: { webhookSecret: true },
     });
-    secret = credential?.webhookSecret ?? null;
+    secret = credential?.webhookSecret?.trim() || process.env.PATHAO_WEBHOOK_SECRET?.trim() || null;
   } catch {
     return NextResponse.json(
       { ok: false, message: "Webhook authentication is temporarily unavailable" },
